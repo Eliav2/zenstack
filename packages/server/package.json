@@ -26,6 +26,7 @@
     "author": "ZenStack Team",
     "license": "MIT",
     "dependencies": {
+        "@types/ws": "^8.5.10",
         "@zenstackhq/runtime": "workspace:*",
         "change-case": "^4.1.2",
         "lower-case-first": "^2.0.2",
@@ -34,6 +35,7 @@
         "ts-japi": "^1.10.1",
         "upper-case-first": "^2.0.2",
         "url-pattern": "^1.0.3",
+        "ws": "^8.17.0",
         "zod": "^3.22.4",
         "zod-validation-error": "^1.5.0"
     },

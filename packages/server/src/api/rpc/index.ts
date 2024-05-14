@@ -14,6 +14,8 @@ import { fromZodError } from 'zod-validation-error';
 import { Response } from '../../types';
 import { APIHandlerBase, RequestContext } from '../base';
 import { logError, registerCustomSerializers } from '../utils';
+import WebSocket from 'ws';
+import { Prisma } from '@prisma/client/extension';
 
 registerCustomSerializers();
 
@@ -125,6 +127,23 @@ class RequestHandler extends APIHandlerBase {
                 }
                 break;
 
+            case 'transaction': {
+                if (method !== 'POST') {
+                    return {
+                        status: 400,
+                        body: this.makeError('invalid request method, only POST is supported'),
+                    };
+                }
+                if (!requestBody) {
+                    return { status: 400, body: this.makeError('missing request body') };
+                }
+                args = requestBody;
+
+                // TODO: transaction's status code should be conditional
+                resCode = 200;
+
+                break;
+            }
             default:
                 return { status: 400, body: this.makeError('invalid operation: ' + op) };
         }

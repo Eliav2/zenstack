@@ -23,6 +23,7 @@ export interface DbOperations {
     count(args?: unknown): Promise<any>;
     subscribe(args?: unknown): Promise<any>;
     check(args: unknown): Promise<boolean>;
+    transaction(args: unknown): Promise<boolean>;
     fields: Record<string, any>;
 }
 
