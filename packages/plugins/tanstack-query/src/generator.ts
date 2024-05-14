@@ -318,6 +318,62 @@ function generateCheckHook(
     ]);
 }
 
+function generateTransactionHook(
+    target: string,
+    version: TanStackVersion,
+    sf: SourceFile,
+    model: DataModel,
+    prismaImport: string
+) {
+    const mapFilterType = (type: DataModelFieldType) => {
+        return match(type.type)
+            .with(P.union('Int', 'BigInt'), () => 'number')
+            .with('String', () => 'string')
+            .with('Boolean', () => 'boolean')
+            .otherwise(() => undefined);
+    };
+
+    const filterFields: Array<{ name: string; type: string }> = [];
+    const enumsToImport = new Set<string>();
+
+    // collect filterable fields and enums to import
+    model.fields.forEach((f) => {
+        if (isEnum(f.type.reference?.ref)) {
+            enumsToImport.add(f.type.reference.$refText);
+            filterFields.push({ name: f.name, type: f.type.reference.$refText });
+        }
+
+        const mappedType = mapFilterType(f.type);
+        if (mappedType) {
+            filterFields.push({ name: f.name, type: mappedType });
+        }
+    });
+
+    if (enumsToImport.size > 0) {
+        // import enums
+        sf.addStatements(`import type { ${Array.from(enumsToImport).join(', ')} } from '${prismaImport}';`);
+    }
+
+    const whereType = `{ ${filterFields.map(({ name, type }) => `${name}?: ${type}`).join('; ')} }`;
+
+    const func = sf.addFunction({
+        name: `useTransaction`,
+        isExported: true,
+        typeParameters: ['TError = DefaultError'],
+        parameters: [
+            { name: 'args', type: `{ operation: PolicyCrudKind; where?: ${whereType}; }` },
+            { name: 'options?', type: makeQueryOptions(target, 'boolean', 'boolean', false, false, version) },
+        ],
+    });
+
+    func.addStatements([
+        makeGetContext(target),
+        `return useModelQuery<boolean, boolean, TError>('${model.name}', \`\${endpoint}/${lowerCaseFirst(
+            model.name
+        )}/transaction\`, args, options, fetch);`,
+    ]);
+}
+
 function generateModelHooks(
     target: TargetFramework,
     version: TanStackVersion,
@@ -555,6 +611,11 @@ function generateModelHooks(
     {
         // extra `check` hook for ZenStack's permission checker API
         generateCheckHook(target, version, sf, model, prismaImport);
+    }
+
+    {
+        // extra `transaction` hook for ZenStack's transaction API
+        generateTransactionHook(target, version, sf, model, prismaImport);
     }
 }
 
