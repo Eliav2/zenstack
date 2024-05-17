@@ -4,3 +4,4 @@ packages:
     - 'packages/misc/*'
     - 'packages/ide/*'
     - 'tests/*'
+    - 'examples/warehouse/*'
