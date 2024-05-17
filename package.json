@@ -3,7 +3,7 @@
     "version": "2.1.2",
     "description": "",
     "scripts": {
-        "build": "pnpm -r build",
+        "build": "pnpm --filter \"./packages/**\" -r build ",
         "lint": "pnpm -r lint",
         "test": "pnpm -r --parallel run test --silent --forceExit",
         "test-ci": "pnpm -r --parallel run --filter=\"./packages/**\" test --silent --forceExit",
@@ -23,10 +23,14 @@
     "license": "MIT",
     "devDependencies": {
         "@changesets/cli": "^2.26.0",
+        "@prisma/client": "^5.14.0",
         "@types/jest": "^29.5.10",
         "@types/node": "^20.10.2",
         "@typescript-eslint/eslint-plugin": "^7.6.0",
         "@typescript-eslint/parser": "^7.6.0",
+        "@zenstackhq/runtime": "workspace:*",
+        "@zenstackhq/server": "workspace:*",
+        "@zenstackhq/tanstack-query": "workspace:*",
         "concurrently": "^7.4.0",
         "copyfiles": "^2.4.1",
         "eslint": "^8.57.0",
@@ -38,6 +42,8 @@
         "ts-node": "^10.9.1",
         "tsup": "^8.0.1",
         "tsx": "^4.7.1",
-        "typescript": "^5.4.4"
+        "typescript": "^5.4.4",
+        "zenstack": "workspace:*",
+        "zod": "^3.22.4"
     }
 }

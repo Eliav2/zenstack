@@ -23,6 +23,7 @@
     "@react-buddy/ide-toolbox": "^2.4.0",
     "@react-buddy/palette-mui": "^5.0.2",
     "@tanstack/react-form": "^0.16.2",
+    "@tanstack/react-query": "^5.36.2",
     "@tanstack/react-query-devtools": "^5.28.9",
     "@tanstack/react-router": "^1.22.9",
     "@tanstack/router-vite-plugin": "^1.23.0",
@@ -32,10 +33,10 @@
     "@trpc/server": "11.0.0-next-beta.318",
     "dayjs": "^1.11.10",
     "immer": "^10.0.4",
-    "zenstack-demo-warehouse-backend": "workspace:*",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recoil": "^0.7.7",
+    "zenstack-demo-warehouse-backend": "workspace:*",
     "zod": "^3.22.4"
   },
   "devDependencies": {

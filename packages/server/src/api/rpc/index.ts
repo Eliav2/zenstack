@@ -14,8 +14,6 @@ import { fromZodError } from 'zod-validation-error';
 import { Response } from '../../types';
 import { APIHandlerBase, RequestContext } from '../base';
 import { logError, registerCustomSerializers } from '../utils';
-import WebSocket from 'ws';
-import { Prisma } from '@prisma/client/extension';
 
 registerCustomSerializers();
 
@@ -187,7 +185,7 @@ class RequestHandler extends APIHandlerBase {
                 const { error } = this.makeError(
                     err.message,
                     err.meta?.reason as string,
-                    err.meta?.zodErrors as ZodError
+                    err.meta?.zodErrors as ZodError,
                 );
                 return {
                     status,
@@ -241,7 +239,7 @@ class RequestHandler extends APIHandlerBase {
         args: any,
         model: string,
         dbOp: string,
-        zodSchemas: ZodSchemas | undefined
+        zodSchemas: ZodSchemas | undefined,
     ) {
         const { meta, ...rest } = args;
         if (meta?.serialization) {
@@ -260,7 +258,7 @@ class RequestHandler extends APIHandlerBase {
         zodSchemas: ZodSchemas | undefined,
         model: string,
         operation: keyof DbOperations,
-        args: unknown
+        args: unknown,
     ) {
         const zodSchema = zodSchemas && this.getZodSchema(zodSchemas, model, operation);
         if (zodSchema) {
