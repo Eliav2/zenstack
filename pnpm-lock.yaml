@@ -95,6 +95,9 @@ importers:
       '@types/express-session':
         specifier: ^1.18.0
         version: 1.18.0
+      '@types/express-ws':
+        specifier: ^3.0.4
+        version: 3.0.4
       '@types/morgan':
         specifier: ^1.9.9
         version: 1.9.9
@@ -125,9 +128,15 @@ importers:
       express:
         specifier: 4.18.3
         version: 4.18.3
+      express-serve-static-core:
+        specifier: ^0.1.1
+        version: 0.1.1
       express-session:
         specifier: ^1.18.0
         version: 1.18.0
+      express-ws:
+        specifier: ^5.0.2
+        version: 5.0.2(express@4.18.3)
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.2
@@ -4699,6 +4708,9 @@ packages:
   '@types/express-session@1.18.0':
     resolution: {integrity: sha512-27JdDRgor6PoYlURY+Y5kCakqp5ulC0kmf7y+QwaY+hv9jEFuQOThgkjyA53RP3jmKuBsH5GR6qEfFmvb8mwOA==}
 
+  '@types/express-ws@3.0.4':
+    resolution: {integrity: sha512-Yjj18CaivG5KndgcvzttWe8mPFinPCHJC2wvyQqVzA7hqeufM8EtWMj6mpp5omg3s8XALUexhOu8aXAyi/DyJQ==}
+
   '@types/express@4.17.17':
     resolution: {integrity: sha512-Q4FmmuLGBG58btUnfS1c1r/NQdlp3DMfGDGig8WhfpA2YRUtEkxAjkZb0yvplJGYdF1fsQ81iMDcH24sSCNC/Q==}
 
@@ -6855,9 +6867,18 @@ packages:
     resolution: {integrity: sha512-2Zks0hf1VLFYI1kbh0I5jP3KHHyCHpkfyHBzsSXRFgl/Bg9mWYfMW8oD+PdMPlEwy5HNsR9JutYy6pMeOh61nw==}
     engines: {node: ^14.15.0 || ^16.10.0 || >=18.0.0}
 
+  express-serve-static-core@0.1.1:
+    resolution: {integrity: sha512-phQFPo1vVwBLOjDq+EspUY6PpWZIs/s62Lvu6QuReViQ9j9ANBnMqPBRwdxs3zxNmpMJ9KBKrmMqCjMwHnGRyQ==}
+
   express-session@1.18.0:
     resolution: {integrity: sha512-m93QLWr0ju+rOwApSsyso838LQwgfs44QtOP/WBiwtAgPIo/SAh1a5c6nn2BR6mFNZehTpqKDESzP+fRHVbxwQ==}
     engines: {node: '>= 0.8.0'}
+
+  express-ws@5.0.2:
+    resolution: {integrity: sha512-0uvmuk61O9HXgLhGl3QhNSEtRsQevtmbL94/eILaliEADZBHZOQUAiHFrGPrgsjikohyrmSG5g+sCfASTt0lkQ==}
+    engines: {node: '>=4.5.0'}
+    peerDependencies:
+      express: ^4.0.0 || ^5.0.0-alpha.1
 
   express@4.18.3:
     resolution: {integrity: sha512-6VyCijWQ+9O7WuVMTRBTl+cjNNIzD5cY5mQ1WM8r/LEkI2u8EYpOotESNwzNlyCn3g+dmjKYI6BmNneSr/FSRw==}
@@ -11403,6 +11424,18 @@ packages:
     resolution: {integrity: sha512-7KxauUdBmSdWnmpaGFg+ppNjKF8uNLry8LyzjauQDOVONfFLNKrKvQOxZ/VuTIcS/gge/YNahf5RIIQWTSarlg==}
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
 
+  ws@7.5.9:
+    resolution: {integrity: sha512-F+P9Jil7UiSKSkppIiD94dN07AwvFixvLIj1Og1Rl9GGMuNipJnV9JzjD6XuqmAeiswGvUmNLjr5cFuXwNS77Q==}
+    engines: {node: '>=8.3.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: ^5.0.2
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   ws@8.17.0:
     resolution: {integrity: sha512-uJq6108EgZMAl20KagGkzCKfMEjxmKvZHG7Tlq0Z6nOky7YF7aq4mOx6xK8TJ/i1LeK4Qus7INktacctDgY8Ow==}
     engines: {node: '>=10.0.0'}
@@ -15812,6 +15845,12 @@ snapshots:
     dependencies:
       '@types/express': 4.17.21
 
+  '@types/express-ws@3.0.4':
+    dependencies:
+      '@types/express': 4.17.21
+      '@types/express-serve-static-core': 4.17.35
+      '@types/ws': 8.5.10
+
   '@types/express@4.17.17':
     dependencies:
       '@types/body-parser': 1.19.2
@@ -18402,6 +18441,8 @@ snapshots:
       jest-message-util: 29.7.0
       jest-util: 29.7.0
 
+  express-serve-static-core@0.1.1: {}
+
   express-session@1.18.0:
     dependencies:
       cookie: 0.6.0
@@ -18414,6 +18455,14 @@ snapshots:
       uid-safe: 2.1.5
     transitivePeerDependencies:
       - supports-color
+
+  express-ws@5.0.2(express@4.18.3):
+    dependencies:
+      express: 4.18.3
+      ws: 7.5.9
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   express@4.18.3:
     dependencies:
@@ -23681,6 +23730,8 @@ snapshots:
     dependencies:
       imurmurhash: 0.1.4
       signal-exit: 3.0.7
+
+  ws@7.5.9: {}
 
   ws@8.17.0: {}
 
