@@ -21,7 +21,7 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "zod-models": ["../../node_modules/@zenstackhq/runtime/zod/models"],
+      "zod-models": ["../../../node_modules/@zenstackhq/runtime/zod/models"],
       "prisma-models": ["../backend/node_modules/@prisma/client"],
     },
     "noErrorTruncation": true,
