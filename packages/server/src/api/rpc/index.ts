@@ -22,6 +22,66 @@ const ERROR_STATUS_MAPPING: Record<string, number> = {
     [PrismaErrorCode.REQUIRED_CONNECTED_RECORD_NOT_FOUND]: 404,
     [PrismaErrorCode.DEPEND_ON_RECORD_NOT_FOUND]: 404,
 };
+import { WebSocketServer } from 'ws';
+import * as crypto from 'node:crypto';
+
+const wss = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: false,
+
+    // perMessageDeflate: {
+    //     zlibDeflateOptions: {
+    //         // See zlib defaults.
+    //         chunkSize: 1024,
+    //         memLevel: 7,
+    //         level: 3,
+    //     },
+    //     zlibInflateOptions: {
+    //         chunkSize: 10 * 1024,
+    //     },
+    //     // Other options settable:
+    //     clientNoContextTakeover: true, // Defaults to negotiated value.
+    //     serverNoContextTakeover: true, // Defaults to negotiated value.
+    //     serverMaxWindowBits: 10, // Defaults to negotiated value.
+    //     // Below options specified as default values.
+    //     concurrencyLimit: 10, // Limits zlib concurrency for perf.
+    //     threshold: 1024, // Size (in bytes) below which messages
+    //     // should not be compressed if context takeover is disabled.
+    // },
+});
+// Handle WebSocket connections
+
+// wss.on('connection', (ws) => {
+//     console.log('New WebSocket connection');
+//     ws.on('open', function () {
+//         ws._socket.write(Buffer.from([0xc1, 0x80]));
+//     });
+//
+//     // Handle incoming messages
+//     ws.on('message', (message) => {
+//         console.log('Received:', message);
+//
+//         // Here you can define how to process the message, for example:
+//         // const result = processTransaction(message);
+//
+//         // And send a response back to the client
+//         // ws.send(result);
+//     });
+//
+//     // Handle connection close
+//     ws.on('close', () => {
+//         console.log('WebSocket connection closed');
+//     });
+//
+//     ws.on('error', (err) => {
+//         console.error('WebSocket error:', err);
+//     });
+// });
+// process.on('message', (request, socket) => {
+//     wss.handleUpgrade(request, socket, undefined, (ws) => {
+//         ws.send('foo');
+//     });
+// });
 
 /**
  * Prisma RPC style API request handler that mirrors the Prisma Client API
@@ -36,6 +96,10 @@ class RequestHandler extends APIHandlerBase {
         modelMeta,
         zodSchemas,
         logger,
+        headers,
+        socket,
+        request: req,
+        response: res,
     }: RequestContext): Promise<Response> {
         modelMeta = modelMeta ?? this.defaultModelMeta;
         if (!modelMeta) {
@@ -43,178 +107,216 @@ class RequestHandler extends APIHandlerBase {
         }
 
         const parts = path.split('/').filter((p) => !!p);
-        const op = parts.pop();
-        const model = parts.pop();
+        if (path === '/transaction/.websocket') {
+            // this is a transaction request
+            console.log('Transaction request');
 
-        if (parts.length !== 0 || !op || !model) {
-            return { status: 400, body: this.makeError('invalid request path') };
-        }
+            // // Check if the request is a WebSocket upgrade request
+            // if (!req.headers.upgrade || req.headers.upgrade.toLowerCase() !== 'websocket') {
+            //     return res.status(400).send('Invalid WebSocket upgrade request');
+            // }
+            //
+            // // Get the value of the 'Sec-WebSocket-Key' header
+            // const secWebSocketKey = req.headers['sec-websocket-key'];
+            // if (!secWebSocketKey) {
+            //     return res.status(400).send('Missing Sec-WebSocket-Key header');
+            // }
+            // // Construct the `head` buffer according to the WebSocket protocol
+            // // see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Sec-WebSocket-Accept
+            // const secWebSocketAccept = crypto
+            //     .createHash('sha1')
+            //     .update(secWebSocketKey + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+            //     .digest('base64');
+            //
+            // const head = Buffer.from(
+            //     `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${secWebSocketAccept}\r\n\r\n`,
+            // );
+            // // Handle the WebSocket upgrade
+            // wss.handleUpgrade(req, req.socket, head, (websocket) => {
+            //     wss.emit('connection', websocket, req);
+            // });
+        } else {
+            // this is a regular request
+            const op = parts.pop();
+            const model = parts.pop();
 
-        method = method.toUpperCase();
-        const dbOp = op as keyof DbOperations;
-        let args: unknown;
-        let resCode = 200;
-
-        switch (dbOp) {
-            case 'create':
-            case 'createMany':
-            case 'upsert':
-                if (method !== 'POST') {
-                    return {
-                        status: 400,
-                        body: this.makeError('invalid request method, only POST is supported'),
-                    };
-                }
-                if (!requestBody) {
-                    return { status: 400, body: this.makeError('missing request body') };
-                }
-
-                args = requestBody;
-
-                // TODO: upsert's status code should be conditional
-                resCode = 201;
-                break;
-
-            case 'findFirst':
-            case 'findUnique':
-            case 'findMany':
-            case 'aggregate':
-            case 'groupBy':
-            case 'count':
-            case 'check':
-                if (method !== 'GET') {
-                    return {
-                        status: 400,
-                        body: this.makeError('invalid request method, only GET is supported'),
-                    };
-                }
-                try {
-                    args = query?.q ? this.unmarshalQ(query.q as string, query.meta as string | undefined) : {};
-                } catch {
-                    return { status: 400, body: this.makeError('invalid "q" query parameter') };
-                }
-                break;
-
-            case 'update':
-            case 'updateMany':
-                if (method !== 'PUT' && method !== 'PATCH') {
-                    return {
-                        status: 400,
-                        body: this.makeError('invalid request method, only PUT AND PATCH are supported'),
-                    };
-                }
-                if (!requestBody) {
-                    return { status: 400, body: this.makeError('missing request body') };
-                }
-
-                args = requestBody;
-                break;
-
-            case 'delete':
-            case 'deleteMany':
-                if (method !== 'DELETE') {
-                    return {
-                        status: 400,
-                        body: this.makeError('invalid request method, only DELETE is supported'),
-                    };
-                }
-                try {
-                    args = query?.q ? this.unmarshalQ(query.q as string, query.meta as string | undefined) : {};
-                } catch {
-                    return { status: 400, body: this.makeError('invalid "q" query parameter') };
-                }
-                break;
-
-            case 'transaction': {
-                if (method !== 'POST') {
-                    return {
-                        status: 400,
-                        body: this.makeError('invalid request method, only POST is supported'),
-                    };
-                }
-                if (!requestBody) {
-                    return { status: 400, body: this.makeError('missing request body') };
-                }
-                args = requestBody;
-
-                // TODO: transaction's status code should be conditional
-                resCode = 200;
-
-                break;
-            }
-            default:
-                return { status: 400, body: this.makeError('invalid operation: ' + op) };
-        }
-
-        const { error, zodErrors, data: parsedArgs } = await this.processRequestPayload(args, model, dbOp, zodSchemas);
-        if (error) {
-            return { status: 422, body: this.makeError(error, CrudFailureReason.DATA_VALIDATION_VIOLATION, zodErrors) };
-        }
-
-        try {
-            if (!prisma[model]) {
-                return { status: 400, body: this.makeError(`unknown model name: ${model}`) };
+            if (parts.length !== 0 || !op || !model) {
+                return { status: 400, body: this.makeError('invalid request path') };
             }
 
-            const result = await prisma[model][dbOp](parsedArgs);
+            method = method.toUpperCase();
+            const dbOp = op as keyof DbOperations;
+            let args: unknown;
+            let resCode = 200;
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            let response: any = { data: result };
+            switch (dbOp) {
+                case 'create':
+                case 'createMany':
+                case 'upsert':
+                    if (method !== 'POST') {
+                        return {
+                            status: 400,
+                            body: this.makeError('invalid request method, only POST is supported'),
+                        };
+                    }
+                    if (!requestBody) {
+                        return { status: 400, body: this.makeError('missing request body') };
+                    }
 
-            // superjson serialize response
-            if (result) {
-                const { json, meta } = SuperJSON.serialize(result);
-                response = { data: json };
-                if (meta) {
-                    response.meta = { serialization: meta };
+                    args = requestBody;
+
+                    // TODO: upsert's status code should be conditional
+                    resCode = 201;
+                    break;
+
+                case 'findFirst':
+                case 'findUnique':
+                case 'findMany':
+                case 'aggregate':
+                case 'groupBy':
+                case 'count':
+                case 'check':
+                    if (method !== 'GET') {
+                        return {
+                            status: 400,
+                            body: this.makeError('invalid request method, only GET is supported'),
+                        };
+                    }
+                    try {
+                        args = query?.q ? this.unmarshalQ(query.q as string, query.meta as string | undefined) : {};
+                    } catch {
+                        return { status: 400, body: this.makeError('invalid "q" query parameter') };
+                    }
+                    break;
+
+                case 'update':
+                case 'updateMany':
+                    if (method !== 'PUT' && method !== 'PATCH') {
+                        return {
+                            status: 400,
+                            body: this.makeError('invalid request method, only PUT AND PATCH are supported'),
+                        };
+                    }
+                    if (!requestBody) {
+                        return { status: 400, body: this.makeError('missing request body') };
+                    }
+
+                    args = requestBody;
+                    break;
+
+                case 'delete':
+                case 'deleteMany':
+                    if (method !== 'DELETE') {
+                        return {
+                            status: 400,
+                            body: this.makeError('invalid request method, only DELETE is supported'),
+                        };
+                    }
+                    try {
+                        args = query?.q ? this.unmarshalQ(query.q as string, query.meta as string | undefined) : {};
+                    } catch {
+                        return { status: 400, body: this.makeError('invalid "q" query parameter') };
+                    }
+                    break;
+
+                case 'transaction': {
+                    if (method !== 'POST') {
+                        return {
+                            status: 400,
+                            body: this.makeError('invalid request method, only POST is supported'),
+                        };
+                    }
+                    if (!requestBody) {
+                        return { status: 400, body: this.makeError('missing request body') };
+                    }
+                    args = requestBody;
+
+                    // TODO: transaction's status code should be conditional
+                    resCode = 200;
+
+                    break;
                 }
+                default:
+                    return { status: 400, body: this.makeError('invalid operation: ' + op) };
             }
 
-            return { status: resCode, body: response };
-        } catch (err) {
-            if (isPrismaClientKnownRequestError(err)) {
-                let status: number;
+            const {
+                error,
+                zodErrors,
+                data: parsedArgs,
+            } = await this.processRequestPayload(args, model, dbOp, zodSchemas);
+            if (error) {
+                return {
+                    status: 422,
+                    body: this.makeError(error, CrudFailureReason.DATA_VALIDATION_VIOLATION, zodErrors),
+                };
+            }
 
-                if (err.meta?.reason === CrudFailureReason.DATA_VALIDATION_VIOLATION) {
-                    // data validation error
-                    status = 422;
+            try {
+                if (!prisma[model]) {
+                    return { status: 400, body: this.makeError(`unknown model name: ${model}`) };
+                }
+
+                const result = await prisma[model][dbOp](parsedArgs);
+
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                let response: any = { data: result };
+
+                // superjson serialize response
+                if (result) {
+                    const { json, meta } = SuperJSON.serialize(result);
+                    response = { data: json };
+                    if (meta) {
+                        response.meta = { serialization: meta };
+                    }
+                }
+
+                return { status: resCode, body: response };
+            } catch (err) {
+                if (isPrismaClientKnownRequestError(err)) {
+                    let status: number;
+
+                    if (err.meta?.reason === CrudFailureReason.DATA_VALIDATION_VIOLATION) {
+                        // data validation error
+                        status = 422;
+                    } else {
+                        status = ERROR_STATUS_MAPPING[err.code] ?? 400;
+                    }
+
+                    const { error } = this.makeError(
+                        err.message,
+                        err.meta?.reason as string,
+                        err.meta?.zodErrors as ZodError,
+                    );
+                    return {
+                        status,
+                        body: {
+                            error: {
+                                ...error,
+                                prisma: true,
+                                code: err.code,
+                            },
+                        },
+                    };
+                } else if (isPrismaClientUnknownRequestError(err) || isPrismaClientValidationError(err)) {
+                    logError(logger, err.message);
+                    return {
+                        status: 400,
+                        body: {
+                            error: {
+                                prisma: true,
+                                message: err.message,
+                            },
+                        },
+                    };
                 } else {
-                    status = ERROR_STATUS_MAPPING[err.code] ?? 400;
+                    const _err = err as Error;
+                    logError(logger, _err.message + (_err.stack ? '\n' + _err.stack : ''));
+                    return {
+                        status: 400,
+                        body: this.makeError((err as Error).message),
+                    };
                 }
-
-                const { error } = this.makeError(
-                    err.message,
-                    err.meta?.reason as string,
-                    err.meta?.zodErrors as ZodError,
-                );
-                return {
-                    status,
-                    body: {
-                        error: {
-                            ...error,
-                            prisma: true,
-                            code: err.code,
-                        },
-                    },
-                };
-            } else if (isPrismaClientUnknownRequestError(err) || isPrismaClientValidationError(err)) {
-                logError(logger, err.message);
-                return {
-                    status: 400,
-                    body: {
-                        error: {
-                            prisma: true,
-                            message: err.message,
-                        },
-                    },
-                };
-            } else {
-                const _err = err as Error;
-                logError(logger, _err.message + (_err.stack ? '\n' + _err.stack : ''));
-                return {
-                    status: 400,
-                    body: this.makeError((err as Error).message),
-                };
             }
         }
     }

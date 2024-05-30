@@ -1,6 +1,7 @@
 import type { DbClientContract, ModelMeta, ZodSchemas } from '@zenstackhq/runtime';
 import { getDefaultModelMeta } from '../shared';
 import type { LoggerConfig } from '../types';
+import { Socket } from 'node:net';
 
 /**
  * API request context
@@ -48,6 +49,23 @@ export type RequestContext = {
      * If unset or set to `undefined`, log will be output to console.
      */
     logger?: LoggerConfig;
+
+    /**
+     * Request object
+     */
+    request?: Request;
+
+    response?: Response;
+
+    /**
+     * Request headers
+     */
+    headers?: Record<string, string | undefined>;
+
+    /**
+     * WebSocket connection
+     */
+    socket?: Socket;
 };
 
 /**
