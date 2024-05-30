@@ -12,7 +12,8 @@ const port = app.get('port');
 const server = app.listen(port, () => {
     console.log(`Listening on port ${port}`);
 });
+export default server;
 // appServer.listen(port, () => {
 //     console.log(`Server is listening on port ${port}`);
 // });
-export default server;
+// export default appServer;

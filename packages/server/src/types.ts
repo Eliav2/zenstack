@@ -1,5 +1,6 @@
 import type { ModelMeta, ZodSchemas } from '@zenstackhq/runtime';
 import { RequestContext } from './api/base';
+import type { Application } from 'express';
 
 type LoggerMethod = (message: string, code?: string) => void;
 

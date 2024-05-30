@@ -31,11 +31,13 @@
     "@trpc/client": "11.0.0-next-beta.318",
     "@trpc/react-query": "11.0.0-next-beta.318",
     "@trpc/server": "11.0.0-next-beta.318",
+    "@types/ws": "^8.5.10",
     "dayjs": "^1.11.10",
     "immer": "^10.0.4",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recoil": "^0.7.7",
+    "ws": "^8.17.0",
     "zenstack-demo-warehouse-backend": "workspace:*",
     "zod": "^3.22.4"
   },
