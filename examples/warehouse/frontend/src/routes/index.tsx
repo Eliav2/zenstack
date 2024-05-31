@@ -43,7 +43,7 @@ const sendTransaction = (url: string) => {
                     }
                 },
                 apply: async (target, thisArg, args) => {
-                    const data = { path, args };
+                    const data = { path, args, error: null };
                     const messageEvent = await sendAndAwaitResponse(socket, JSON.stringify(data));
                     const response = JSON.parse(messageEvent.data);
                     return response;
@@ -55,17 +55,14 @@ const sendTransaction = (url: string) => {
         socket.onopen = async (event) => {
             console.log('Connected to server', event['']);
             // socket._socket.write(Buffer.from([0xc1, 0x80]));
-            await transactionHandler(txProxy);
-            // await transactionHandler({
-            //     create: async () => {
-            //         const messageEvent = await sendAndAwaitResponse(socket, JSON.stringify({ test: 'Create' }));
-            //         console.log('Create response:', messageEvent.data);
-            //     },
-            //     update: async () => {
-            //         const messageEvent = await sendAndAwaitResponse(socket, 'Update');
-            //         console.log('Update response:', messageEvent.data);
-            //     },
-            // });
+            try {
+                await transactionHandler(txProxy);
+            } catch (err) {
+                const errStr = JSON.stringify({ error: err?.message ?? err });
+                console.log('error occurred, rolling back transaction on the server', errStr);
+                socket.send(errStr);
+                // await sendAndAwaitResponse(socket, JSON.stringify({ error: true })
+            }
 
             socket.close();
             console.log('closing!');
@@ -87,16 +84,27 @@ function HomeComponent() {
     );
     const userData = userQuery.data;
     const userMoney = userData?.money;
-
+    if (!userMoney) {
+        return null;
+    }
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', p: 2 }}>
             <Typography variant="body1">money: {userMoney}</Typography>
             <Button
                 onClick={() => {
                     transaction(async (tx) => {
-                        console.log('res1', await tx.product.findFirst());
-                        console.log('res2', await tx.product.findFirst({ select: { name: true } }));
-                        console.log('res3', await tx.product.findFirst({ select: { id: true, name: true } }));
+                        const res = await tx.user.update({
+                            where: { email: user.email },
+                            data: {
+                                money: userMoney + 10,
+                            },
+                        });
+                        console.log(res);
+                        // throw new Error('test client side erro1');
+
+                        // console.log('res1', await tx.product.findFirst());
+                        // console.log('res2', await tx.product.findFirst({ select: { name: true } }));
+                        // console.log('res3', await tx.product.findFirst({ select: { id: true, name: true } }));
 
                         // await tx.create();
                     });

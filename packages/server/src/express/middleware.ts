@@ -62,16 +62,29 @@ const wsHandleUpgradeAndWaitForConnectionClose = (
     return new Promise<void>((resolve, reject) => {
         wss.handleUpgrade(request, socket, head, (ws) => {
             ws.on('message', async (message) => {
-                console.log('Received:', message.toString());
-                const data = JSON.parse(message.toString());
-                const { path, args } = data;
-                if (path?.length == 2) {
-                    let func = path.reduce((acc, curr) => acc[curr], tx);
-                    const result = await func(...args);
-                    ws.send(JSON.stringify(result));
-                } else {
-                    console.log('Invalid path');
-                    ws.send('Invalid path');
+                try {
+                    console.log('Received:', message.toString());
+                    const data = JSON.parse(message.toString());
+                    if (data.error) {
+                        console.error('Client side Error occurred in transaction:', data.error);
+                        ws.close();
+                        reject(data.error);
+                        // throw new Error(data.error);
+                    }
+                    const { path, args } = data;
+                    if (path?.length == 2) {
+                        let func = path.reduce((acc, curr) => acc[curr], tx);
+                        const result = await func(...args);
+                        ws.send(JSON.stringify(result));
+                    } else {
+                        console.log('Invalid path');
+                        ws.send('Invalid path');
+                        reject('Invalid path');
+                    }
+                } catch (err) {
+                    console.error('Server side Error occurred in transaction', err);
+                    ws.close();
+                    reject(err);
                 }
             });
 
@@ -97,42 +110,6 @@ const patchAppWithWS = (app: Application, getPrisma: MiddlewareOptions['getPrism
         noServer: true,
     });
 
-    // wss.on('connection', (ws: WebSocket, req: http.IncomingMessage, tx: PrismaClient) => {
-    //     console.log('new connection');
-    //     // const res = new http.ServerResponse(req);
-    //     // have Express process the request
-    //     // app(req, res);
-    //     // const prisma = await getPrisma(req, null);
-    //     // fetch('https://google.com').then((res) => {});
-    //     // getPrisma(req, null).then((prisma) => {});
-    //
-    //     ws.on('message', async (message) => {
-    //         console.log('Received:', message.toString());
-    //         const data = JSON.parse(message.toString());
-    //         const { path, args } = data;
-    //         // const prisma = await getPrisma(req, null);
-    //         if (path?.length == 2) {
-    //             // console.log(path, args);
-    //             let func = path.reduce((acc, curr) => acc[curr], tx);
-    //             const result = await func(...args);
-    //             // console.log(req.cookie);
-    //             // console.log(result);
-    //             ws.send(JSON.stringify(result));
-    //         } else {
-    //             console.log('Invalid path');
-    //             ws.send('Invalid path');
-    //         }
-    //     });
-    //
-    //     ws.on('close', () => {
-    //         console.log('WebSocket connection closed');
-    //     });
-    //
-    //     ws.on('error', (err) => {
-    //         console.error('WebSocket error: ', err);
-    //     });
-    // });
-
     server.on('upgrade', async (request, socket, head) => {
         console.log('upgrade event', request.url);
         if (request.url === '/model/transaction') {
@@ -142,34 +119,20 @@ const patchAppWithWS = (app: Application, getPrisma: MiddlewareOptions['getPrism
             // have Express process the request
             app(request, response);
 
+            // get enhanced prisma client, to be used in the transaction
             const prisma = await getPrisma(request, response);
 
-            // wss.handleUpgrade(request, socket, head, (ws) => {
-            //     wss.emit('connection', ws, request, prisma);
-            // });
+            prisma
+                .$transaction(async (tx) => {
+                    // console.log('inside a transaction');
 
-            // awaitForTransactionConnectionToBeClosed(request, socket, head, (ws) => {
-            //     wss.emit('connection', ws, request, prisma);
-            // });
-
-            prisma.$transaction(async (tx) => {
-                console.log('inside a transaction');
-                // let 'ws' handle the upgrade, inside this transaction
-                await wsHandleUpgradeAndWaitForConnectionClose(
-                    wss,
-                    request,
-                    socket,
-                    head,
-                    tx,
-                    //     (ws) => {
-                    //     // wss.emit('connection', ws, request, prisma);
-                    // }
-                );
-                // wss.handleUpgrade(request, socket, head, (ws) => {
-                //     wss.emit('connection', ws, request, tx);
-                // });
-            });
-            // console.log(await prisma.product.findFirst());
+                    // let 'ws' handle the upgrade, inside this transaction
+                    // await to a close event so the transaction is not committed until the connection is closed
+                    await wsHandleUpgradeAndWaitForConnectionClose(wss, request, socket, head, tx);
+                })
+                .catch((err) => {
+                    console.error('Error occurred in transaction:', err, '\nRolling back transaction');
+                });
         } else {
             socket.destroy();
         }
