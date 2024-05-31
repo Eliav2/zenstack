@@ -43,6 +43,10 @@ const metadata = {
                     isDataModel: true,
                     isArray: true,
                     backLink: 'manager',
+                }, money: {
+                    name: "money",
+                    type: "Float",
+                    attributes: [{ "name": "@default", "args": [{ "value": 0 }] }],
                 },
             }
             , uniqueConstraints: {

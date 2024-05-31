@@ -44,6 +44,7 @@ model User {
   role       Role              @relation(fields: [roleId], references: [id])
   roleId     String
   manageres  Product2Manager[]
+  money      Float             @default(0)
 }
 
 /// @@deny('all', auth() == null)
