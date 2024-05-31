@@ -64,16 +64,27 @@ const wsHandleUpgradeAndWaitForConnectionClose = (
             ws.on('message', async (message) => {
                 try {
                     console.log('Received:', message.toString());
-                    const data = JSON.parse(message.toString());
+                    const data = JSON.parse(message.toString()) as
+                        | {
+                              path: string[];
+                              args: any[];
+                              error: string | null;
+                          }
+                        | undefined;
+                    if (!data) {
+                        console.log('Invalid data received');
+                        ws.send('Invalid data received');
+                        return reject('Invalid data received');
+                    }
                     if (data.error) {
                         console.error('Client side Error occurred in transaction:', data.error);
                         ws.close();
-                        reject(data.error);
+                        return reject(data.error);
                         // throw new Error(data.error);
                     }
                     const { path, args } = data;
-                    if (path?.length == 2) {
-                        let func = path.reduce((acc, curr) => acc[curr], tx);
+                    if (path && path.length == 2 && !path.find((p) => p.startsWith('$'))) {
+                        const func = path.reduce((acc, curr) => (acc as any)[curr], tx);
                         const result = await func(...args);
                         ws.send(JSON.stringify(result));
                     } else {

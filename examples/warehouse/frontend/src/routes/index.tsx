@@ -3,17 +3,13 @@ import { Box, Divider, Typography } from '@mui/material';
 import Button from '@mui/material/Button';
 import Link from '../components/Link.tsx';
 import { PrismaClient } from 'prisma-models';
-import { useFindManyUser, useFindUniqueUser } from 'zenstack-demo-warehouse-backend/src/hooks/generated';
+import { useFindManyUser, useFindUniqueUser, useUpdateUser } from 'zenstack-demo-warehouse-backend/src/hooks/generated';
 import useAuthenticatedUser from '../hooks/useAuthenticatedUser.ts';
-
 export const Route = createFileRoute('/')({
     component: HomeComponent,
 });
 
-interface TransactionProxy extends Omit<PrismaClient, `$${string}`> {
-    // create: () => Promise<void>;
-    // update: () => Promise<void>;
-}
+interface TransactionProxy extends Omit<PrismaClient, `$${string}`> {}
 
 function waitForResponse(socket: WebSocket): Promise<MessageEvent> {
     return new Promise((resolve) => {
@@ -38,7 +34,7 @@ const sendTransaction = (url: string) => {
         function createTXProxy(path: string[] = []): any {
             return new Proxy(() => {}, {
                 get: (target, prop) => {
-                    if (typeof prop === 'string') {
+                    if (typeof prop === 'string' && !prop.startsWith('$')) {
                         return createTXProxy([...path, prop]);
                     }
                 },
@@ -46,6 +42,33 @@ const sendTransaction = (url: string) => {
                     const data = { path, args, error: null };
                     const messageEvent = await sendAndAwaitResponse(socket, JSON.stringify(data));
                     const response = JSON.parse(messageEvent.data);
+                    console.log(path, args);
+
+                    // todo: add here automatic query invalidation
+
+                    const mutationOperation = [
+                        'create',
+                        'update',
+                        'delete',
+                        'upsert',
+                        'deleteMany',
+                        'updateMany',
+                        'createMany',
+                        'createManyAndReturn',
+                    ];
+                    const operation = path[1] as string;
+                    if (mutationOperation.includes(operation)) {
+                        console.log('mutation operation', operation, 'with args', args);
+                        setupInvalidation(
+                            model,
+                            operation,
+                            modelMeta,
+                            finalOptions,
+                            (predicate) => queryClient.invalidateQueries({ predicate }),
+                            logging,
+                        );
+                    }
+
                     return response;
                 },
             });
@@ -53,7 +76,7 @@ const sendTransaction = (url: string) => {
 
         const txProxy = createTXProxy();
         socket.onopen = async (event) => {
-            console.log('Connected to server', event['']);
+            console.log('Connected to server');
             // socket._socket.write(Buffer.from([0xc1, 0x80]));
             try {
                 await transactionHandler(txProxy);
@@ -84,6 +107,8 @@ function HomeComponent() {
     );
     const userData = userQuery.data;
     const userMoney = userData?.money;
+
+    const userMutation = useUpdateUser({});
     if (!userMoney) {
         return null;
     }
@@ -93,13 +118,21 @@ function HomeComponent() {
             <Button
                 onClick={() => {
                     transaction(async (tx) => {
+                        const currentMoney = await tx.user.findFirst({
+                            where: { email: user.email },
+                            select: { money: true },
+                        });
+                        if (!currentMoney) {
+                            throw new Error('User not found');
+                        }
                         const res = await tx.user.update({
                             where: { email: user.email },
                             data: {
-                                money: userMoney + 10,
+                                money: currentMoney.money + 10,
                             },
                         });
                         console.log(res);
+                        // tx.user.createManyAndReturn()
                         // throw new Error('test client side erro1');
 
                         // console.log('res1', await tx.product.findFirst());
@@ -110,7 +143,19 @@ function HomeComponent() {
                     });
                 }}
             >
-                Send
+                Send Transaction
+            </Button>
+            <Button
+                onClick={() => {
+                    userMutation.mutate({
+                        where: { email: user.email },
+                        data: {
+                            money: userMoney + 10,
+                        },
+                    });
+                }}
+            >
+                Send mutation query
             </Button>
         </Box>
     );
