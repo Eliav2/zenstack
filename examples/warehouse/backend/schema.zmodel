@@ -38,6 +38,8 @@ model User extends Base {
     roleId String
     manageres Product2Manager[]
 
+    money Float @default(0)
+
     @@allow('read', true)
 }
 

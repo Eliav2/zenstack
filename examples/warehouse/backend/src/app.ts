@@ -6,7 +6,6 @@ import { getPrisma } from './getPrisma.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { cookieSessionFixMiddleware } from './middleware/cookieSessionFix.middleware.js';
 import express, { Request, Response } from 'express';
-import expressWS from 'express-ws';
 
 import authRouter from './routes/auth.routes.js';
 import { ZenStackMiddleware } from '@zenstackhq/server/express';
