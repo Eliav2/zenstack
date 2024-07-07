@@ -1,110 +1,57 @@
 import {
     DataModel,
     DataModelField,
-    Enum,
     Expression,
     Model,
     isDataModel,
     isDataModelField,
     isEnum,
-    isExpression,
-    isInvocationExpr,
     isMemberAccessExpr,
     isReferenceExpr,
     isThisExpr,
 } from '@zenstackhq/language/ast';
-import {
-    FIELD_LEVEL_OVERRIDE_READ_GUARD_PREFIX,
-    FIELD_LEVEL_OVERRIDE_UPDATE_GUARD_PREFIX,
-    FIELD_LEVEL_READ_CHECKER_PREFIX,
-    FIELD_LEVEL_READ_CHECKER_SELECTOR,
-    FIELD_LEVEL_UPDATE_GUARD_PREFIX,
-    HAS_FIELD_LEVEL_POLICY_FLAG,
-    PRE_UPDATE_VALUE_SELECTOR,
-    type PolicyKind,
-    type PolicyOperationKind,
-} from '@zenstackhq/runtime';
+import { PolicyCrudKind, type PolicyOperationKind } from '@zenstackhq/runtime';
 import {
     ExpressionContext,
-    PluginError,
     PluginOptions,
+    PolicyAnalysisResult,
     RUNTIME_PACKAGE,
     TypeScriptExpressionTransformer,
-    TypeScriptExpressionTransformerError,
     analyzePolicies,
-    getAttributeArg,
-    getAuthModel,
     getDataModels,
-    getIdFields,
-    getLiteral,
     hasAttribute,
     hasValidationAttributes,
     isAuthInvocation,
-    isEnumFieldReference,
     isForeignKeyField,
-    isFromStdlib,
-    isFutureExpr,
-    resolved,
 } from '@zenstackhq/sdk';
 import { getPrismaClientImportSpec } from '@zenstackhq/sdk/prisma';
-import { streamAllContents, streamAst, streamContents } from 'langium';
+import { streamAst } from 'langium';
 import { lowerCaseFirst } from 'lower-case-first';
 import path from 'path';
-import { FunctionDeclaration, Project, SourceFile, VariableDeclarationKind, WriterFunction } from 'ts-morph';
-import { name } from '..';
-import { isCollectionPredicate } from '../../../utils/ast-utils';
-import { ALL_OPERATION_KINDS } from '../../plugin-utils';
+import { CodeBlockWriter, Project, SourceFile, VariableDeclarationKind, WriterFunction } from 'ts-morph';
 import { ConstraintTransformer } from './constraint-transformer';
-import { ExpressionWriter, FALSE, TRUE } from './expression-writer';
+import {
+    generateEntityCheckerFunction,
+    generateNormalizedAuthRef,
+    generateQueryGuardFunction,
+    generateSelectForRules,
+    getPolicyExpressions,
+    isEnumReferenced,
+} from './utils';
 
 /**
  * Generates source file that contains Prisma query guard objects used for injecting database queries
  */
 export class PolicyGenerator {
-    async generate(project: Project, model: Model, options: PluginOptions, output: string) {
+    constructor(private options: PluginOptions) {}
+
+    async generate(project: Project, model: Model, output: string) {
         const sf = project.createSourceFile(path.join(output, 'policy.ts'), undefined, { overwrite: true });
         sf.addStatements('/* eslint-disable */');
 
-        sf.addImportDeclaration({
-            namedImports: [
-                { name: 'type QueryContext' },
-                { name: 'type CrudContract' },
-                { name: 'allFieldsEqual' },
-                { name: 'type PolicyDef' },
-                { name: 'type CheckerContext' },
-                { name: 'type CheckerConstraint' },
-            ],
-            moduleSpecifier: `${RUNTIME_PACKAGE}`,
-        });
-
-        // import enums
-        const prismaImport = getPrismaClientImportSpec(output, options);
-        for (const e of model.declarations.filter((d) => isEnum(d) && this.isEnumReferenced(model, d))) {
-            sf.addImportDeclaration({
-                namedImports: [{ name: e.name }],
-                moduleSpecifier: prismaImport,
-            });
-        }
+        this.writeImports(model, output, sf);
 
         const models = getDataModels(model);
-
-        // policy guard functions
-        const policyMap: Record<string, Record<string, string | boolean | object>> = {};
-        for (const model of models) {
-            policyMap[model.name] = await this.generateQueryGuardForModel(model, sf);
-        }
-
-        const generatePermissionChecker = options.generatePermissionChecker === true;
-
-        // CRUD checker functions
-        const checkerMap: Record<string, Record<string, string | boolean>> = {};
-        if (generatePermissionChecker) {
-            for (const model of models) {
-                checkerMap[model.name] = await this.generateCheckerForModel(model, sf);
-            }
-        }
-
-        const authSelector = this.generateAuthSelector(models);
 
         sf.addVariableStatement({
             declarationKind: VariableDeclarationKind.Const,
@@ -114,55 +61,9 @@ export class PolicyGenerator {
                     type: 'PolicyDef',
                     initializer: (writer) => {
                         writer.block(() => {
-                            writer.write('guard:');
-                            writer.inlineBlock(() => {
-                                for (const [model, map] of Object.entries(policyMap)) {
-                                    writer.write(`${lowerCaseFirst(model)}:`);
-                                    writer.inlineBlock(() => {
-                                        for (const [op, func] of Object.entries(map)) {
-                                            if (typeof func === 'object') {
-                                                writer.write(`${op}: ${JSON.stringify(func)},`);
-                                            } else {
-                                                writer.write(`${op}: ${func},`);
-                                            }
-                                        }
-                                    });
-                                    writer.write(',');
-                                }
-                            });
-                            writer.writeLine(',');
-
-                            if (generatePermissionChecker) {
-                                writer.write('checker:');
-                                writer.inlineBlock(() => {
-                                    for (const [model, map] of Object.entries(checkerMap)) {
-                                        writer.write(`${lowerCaseFirst(model)}:`);
-                                        writer.inlineBlock(() => {
-                                            Object.entries(map).forEach(([op, func]) => {
-                                                writer.write(`${op}: ${func},`);
-                                            });
-                                        });
-                                        writer.writeLine(',');
-                                    }
-                                });
-                                writer.writeLine(',');
-                            }
-
-                            writer.write('validation:');
-                            writer.inlineBlock(() => {
-                                for (const model of models) {
-                                    writer.write(`${lowerCaseFirst(model.name)}:`);
-                                    writer.inlineBlock(() => {
-                                        writer.write(`hasValidation: ${hasValidationAttributes(model)}`);
-                                    });
-                                    writer.writeLine(',');
-                                }
-                            });
-
-                            if (authSelector) {
-                                writer.writeLine(',');
-                                writer.write(`authSelector: ${JSON.stringify(authSelector)}`);
-                            }
+                            this.writePolicy(writer, models, sf);
+                            this.writeValidationMeta(writer, models);
+                            this.writeAuthSelector(models, writer);
                         });
                     },
                 },
@@ -172,354 +73,115 @@ export class PolicyGenerator {
         sf.addStatements('export default policy');
 
         // save ts files if requested explicitly or the user provided
-        const preserveTsFiles = options.preserveTsFiles === true || !!options.output;
+        const preserveTsFiles = this.options.preserveTsFiles === true || !!this.options.output;
         if (preserveTsFiles) {
             await sf.save();
         }
     }
 
-    // Generates a { select: ... } object to select `auth()` fields used in policy rules
-    private generateAuthSelector(models: DataModel[]) {
-        const authRules: Expression[] = [];
-
-        models.forEach((model) => {
-            // model-level rules
-            const modelPolicyAttrs = model.attributes.filter((attr) =>
-                ['@@allow', '@@deny'].includes(attr.decl.$refText)
-            );
-
-            // field-level rules
-            const fieldPolicyAttrs = model.fields
-                .flatMap((f) => f.attributes)
-                .filter((attr) => ['@allow', '@deny'].includes(attr.decl.$refText));
-
-            // all rule expression
-            const allExpressions = [...modelPolicyAttrs, ...fieldPolicyAttrs]
-                .filter((attr) => attr.args.length > 1)
-                .map((attr) => attr.args[1].value);
-
-            // collect `auth()` member access
-            allExpressions.forEach((rule) => {
-                streamAst(rule).forEach((node) => {
-                    if (isMemberAccessExpr(node) && isAuthInvocation(node.operand)) {
-                        authRules.push(node);
-                    }
-                });
-            });
-        });
-
-        if (authRules.length > 0) {
-            return this.generateSelectForRules(authRules, true);
-        } else {
-            return undefined;
-        }
-    }
-
-    private isEnumReferenced(model: Model, decl: Enum): unknown {
-        return streamAllContents(model).some((node) => {
-            if (isDataModelField(node) && node.type.reference?.ref === decl) {
-                // referenced as field type
-                return true;
-            }
-            if (isEnumFieldReference(node) && node.target.ref?.$container === decl) {
-                // enum field is referenced
-                return true;
-            }
-            return false;
-        });
-    }
-
-    private getPolicyExpressions(
-        target: DataModel | DataModelField,
-        kind: PolicyKind,
-        operation: PolicyOperationKind,
-        override = false
-    ) {
-        const attributes = target.attributes;
-        const attrName = isDataModel(target) ? `@@${kind}` : `@${kind}`;
-        const attrs = attributes.filter((attr) => {
-            if (attr.decl.ref?.name !== attrName) {
-                return false;
-            }
-
-            if (override) {
-                const overrideArg = getAttributeArg(attr, 'override');
-                return overrideArg && getLiteral<boolean>(overrideArg) === true;
-            } else {
-                return true;
-            }
-        });
-
-        const checkOperation = operation === 'postUpdate' ? 'update' : operation;
-
-        let result = attrs
-            .filter((attr) => {
-                const opsValue = getLiteral<string>(attr.args[0].value);
-                if (!opsValue) {
-                    return false;
-                }
-                const ops = opsValue.split(',').map((s) => s.trim());
-                return ops.includes(checkOperation) || ops.includes('all');
-            })
-            .map((attr) => attr.args[1].value);
-
-        if (operation === 'update') {
-            result = this.processUpdatePolicies(result, false);
-        } else if (operation === 'postUpdate') {
-            result = this.processUpdatePolicies(result, true);
-        }
-
-        return result;
-    }
-
-    private processUpdatePolicies(expressions: Expression[], postUpdate: boolean) {
-        const hasFutureReference = expressions.some((expr) => this.hasFutureReference(expr));
-        if (postUpdate) {
-            // when compiling post-update rules, if any rule contains `future()` reference,
-            // we include all as post-update rules
-            return hasFutureReference ? expressions : [];
-        } else {
-            // when compiling pre-update rules, if any rule contains `future()` reference,
-            // we completely skip pre-update check and defer them to post-update
-            return hasFutureReference ? [] : expressions;
-        }
-    }
-
-    private hasFutureReference(expr: Expression) {
-        for (const node of streamAst(expr)) {
-            if (isInvocationExpr(node) && node.function.ref?.name === 'future' && isFromStdlib(node.function.ref)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private async generateQueryGuardForModel(model: DataModel, sourceFile: SourceFile) {
-        const result: Record<string, string | boolean | object> = {};
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const policies: any = analyzePolicies(model);
-
-        for (const kind of ALL_OPERATION_KINDS) {
-            if (policies[kind] === true || policies[kind] === false) {
-                result[kind] = policies[kind];
-                if (kind === 'create') {
-                    result[kind + '_input'] = policies[kind];
-                }
-                continue;
-            }
-
-            const denies = this.getPolicyExpressions(model, 'deny', kind);
-            const allows = this.getPolicyExpressions(model, 'allow', kind);
-
-            if (kind === 'update' && allows.length === 0) {
-                // no allow rule for 'update', policy is constant based on if there's
-                // post-update counterpart
-                if (this.getPolicyExpressions(model, 'allow', 'postUpdate').length === 0) {
-                    result[kind] = false;
-                    continue;
-                } else {
-                    result[kind] = true;
-                    continue;
-                }
-            }
-
-            if (kind === 'postUpdate' && allows.length === 0 && denies.length === 0) {
-                // no rule 'postUpdate', always allow
-                result[kind] = true;
-                continue;
-            }
-
-            const guardFunc = this.generateQueryGuardFunction(sourceFile, model, kind, allows, denies);
-            result[kind] = guardFunc.getName()!;
-
-            if (kind === 'postUpdate') {
-                const preValueSelect = this.generateSelectForRules([...allows, ...denies]);
-                if (preValueSelect) {
-                    result[PRE_UPDATE_VALUE_SELECTOR] = preValueSelect;
-                }
-            }
-
-            if (kind === 'create' && this.canCheckCreateBasedOnInput(model, allows, denies)) {
-                const inputCheckFunc = this.generateInputCheckFunction(sourceFile, model, kind, allows, denies);
-                result[kind + '_input'] = inputCheckFunc.getName()!;
-            }
-        }
-
-        // generate field read checkers
-        this.generateReadFieldsCheckers(model, sourceFile, result);
-
-        // generate field read override guards
-        this.generateReadFieldsOverrideGuards(model, sourceFile, result);
-
-        // generate field update guards
-        this.generateUpdateFieldsGuards(model, sourceFile, result);
-
-        return result;
-    }
-
-    private generateReadFieldsCheckers(
-        model: DataModel,
-        sourceFile: SourceFile,
-        result: Record<string, string | boolean | object>
-    ) {
-        const allFieldsAllows: Expression[] = [];
-        const allFieldsDenies: Expression[] = [];
-
-        for (const field of model.fields) {
-            const allows = this.getPolicyExpressions(field, 'allow', 'read');
-            const denies = this.getPolicyExpressions(field, 'deny', 'read');
-            if (denies.length === 0 && allows.length === 0) {
-                continue;
-            }
-
-            allFieldsAllows.push(...allows);
-            allFieldsDenies.push(...denies);
-
-            const guardFunc = this.generateReadFieldCheckerFunction(sourceFile, field, allows, denies);
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            result[`${FIELD_LEVEL_READ_CHECKER_PREFIX}${field.name}`] = guardFunc.getName()!;
-        }
-
-        if (allFieldsAllows.length > 0 || allFieldsDenies.length > 0) {
-            result[HAS_FIELD_LEVEL_POLICY_FLAG] = true;
-            const readFieldCheckSelect = this.generateSelectForRules([...allFieldsAllows, ...allFieldsDenies]);
-            if (readFieldCheckSelect) {
-                result[FIELD_LEVEL_READ_CHECKER_SELECTOR] = readFieldCheckSelect;
-            }
-        }
-    }
-
-    private generateReadFieldCheckerFunction(
-        sourceFile: SourceFile,
-        field: DataModelField,
-        allows: Expression[],
-        denies: Expression[]
-    ) {
-        const statements: (string | WriterFunction)[] = [];
-
-        this.generateNormalizedAuthRef(field.$container as DataModel, allows, denies, statements);
-
-        // compile rules down to typescript expressions
-        statements.push((writer) => {
-            const transformer = new TypeScriptExpressionTransformer({
-                context: ExpressionContext.AccessPolicy,
-                fieldReferenceContext: 'input',
-            });
-
-            const denyStmt =
-                denies.length > 0
-                    ? '!(' +
-                      denies
-                          .map((deny) => {
-                              return transformer.transform(deny);
-                          })
-                          .join(' || ') +
-                      ')'
-                    : undefined;
-
-            const allowStmt =
-                allows.length > 0
-                    ? '(' +
-                      allows
-                          .map((allow) => {
-                              return transformer.transform(allow);
-                          })
-                          .join(' || ') +
-                      ')'
-                    : undefined;
-
-            let expr: string | undefined;
-
-            if (denyStmt && allowStmt) {
-                expr = `${denyStmt} && ${allowStmt}`;
-            } else if (denyStmt) {
-                expr = denyStmt;
-            } else if (allowStmt) {
-                expr = allowStmt;
-            } else {
-                throw new Error('should not happen');
-            }
-
-            writer.write('return ' + expr);
-        });
-
-        const func = sourceFile.addFunction({
-            name: `${field.$container.name}$${field.name}_read`,
-            returnType: 'boolean',
-            parameters: [
-                {
-                    name: 'input',
-                    type: 'any',
-                },
-                {
-                    name: 'context',
-                    type: 'QueryContext',
-                },
+    private writeImports(model: Model, output: string, sf: SourceFile) {
+        sf.addImportDeclaration({
+            namedImports: [
+                { name: 'type QueryContext' },
+                { name: 'type CrudContract' },
+                { name: 'allFieldsEqual' },
+                { name: 'type PolicyDef' },
+                { name: 'type PermissionCheckerContext' },
+                { name: 'type PermissionCheckerConstraint' },
             ],
-            statements,
+            moduleSpecifier: `${RUNTIME_PACKAGE}`,
         });
 
-        return func;
-    }
-
-    private generateReadFieldsOverrideGuards(
-        model: DataModel,
-        sourceFile: SourceFile,
-        result: Record<string, string | boolean | object>
-    ) {
-        for (const field of model.fields) {
-            const overrideAllows = this.getPolicyExpressions(field, 'allow', 'read', true);
-            if (overrideAllows.length > 0) {
-                const denies = this.getPolicyExpressions(field, 'deny', 'read');
-                const overrideGuardFunc = this.generateQueryGuardFunction(
-                    sourceFile,
-                    model,
-                    'read',
-                    overrideAllows,
-                    denies,
-                    field,
-                    true
-                );
-                result[`${FIELD_LEVEL_OVERRIDE_READ_GUARD_PREFIX}${field.name}`] = overrideGuardFunc.getName()!;
-            }
+        // import enums
+        const prismaImport = getPrismaClientImportSpec(output, this.options);
+        for (const e of model.declarations.filter((d) => isEnum(d) && isEnumReferenced(model, d))) {
+            sf.addImportDeclaration({
+                namedImports: [{ name: e.name }],
+                moduleSpecifier: prismaImport,
+            });
         }
     }
 
-    private generateUpdateFieldsGuards(
+    private writePolicy(writer: CodeBlockWriter, models: DataModel[], sourceFile: SourceFile) {
+        writer.write('policy:');
+        writer.inlineBlock(() => {
+            for (const model of models) {
+                writer.write(`${lowerCaseFirst(model.name)}:`);
+
+                writer.block(() => {
+                    // model-level guards
+                    this.writeModelLevelDefs(model, writer, sourceFile);
+
+                    // field-level guards
+                    this.writeFieldLevelDefs(model, writer, sourceFile);
+                });
+
+                writer.writeLine(',');
+            }
+        });
+        writer.writeLine(',');
+    }
+
+    // #region Model-level definitions
+
+    // writes model-level policy def for each operation kind for a model
+    // `[modelName]: { [operationKind]: [funcName] },`
+    private writeModelLevelDefs(model: DataModel, writer: CodeBlockWriter, sourceFile: SourceFile) {
+        const policies = analyzePolicies(model);
+        writer.write('modelLevel:');
+        writer.inlineBlock(() => {
+            this.writeModelReadDef(model, policies, writer, sourceFile);
+            this.writeModelCreateDef(model, policies, writer, sourceFile);
+            this.writeModelUpdateDef(model, policies, writer, sourceFile);
+            this.writeModelPostUpdateDef(model, policies, writer, sourceFile);
+            this.writeModelDeleteDef(model, policies, writer, sourceFile);
+        });
+        writer.writeLine(',');
+    }
+
+    // writes `read: ...` for a given model
+    private writeModelReadDef(
         model: DataModel,
-        sourceFile: SourceFile,
-        result: Record<string, string | boolean | object>
+        policies: PolicyAnalysisResult,
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
     ) {
-        for (const field of model.fields) {
-            const allows = this.getPolicyExpressions(field, 'allow', 'update');
-            const denies = this.getPolicyExpressions(field, 'deny', 'update');
+        writer.write(`read:`);
+        writer.inlineBlock(() => {
+            this.writeCommonModelDef(model, 'read', policies, writer, sourceFile);
+        });
+        writer.writeLine(',');
+    }
 
-            if (denies.length === 0 && allows.length === 0) {
-                continue;
-            }
+    // writes `create: ...` for a given model
+    private writeModelCreateDef(
+        model: DataModel,
+        policies: PolicyAnalysisResult,
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
+    ) {
+        writer.write(`create:`);
+        writer.inlineBlock(() => {
+            this.writeCommonModelDef(model, 'create', policies, writer, sourceFile);
 
-            const guardFunc = this.generateQueryGuardFunction(sourceFile, model, 'update', allows, denies, field);
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            result[`${FIELD_LEVEL_UPDATE_GUARD_PREFIX}${field.name}`] = guardFunc.getName()!;
+            // create policy has an additional input checker for validating the payload
+            this.writeCreateInputChecker(model, writer, sourceFile);
+        });
+        writer.writeLine(',');
+    }
 
-            const overrideAllows = this.getPolicyExpressions(field, 'allow', 'update', true);
-            if (overrideAllows.length > 0) {
-                const overrideGuardFunc = this.generateQueryGuardFunction(
-                    sourceFile,
-                    model,
-                    'update',
-                    overrideAllows,
-                    denies,
-                    field,
-                    true
-                );
-                result[`${FIELD_LEVEL_OVERRIDE_UPDATE_GUARD_PREFIX}${field.name}`] = overrideGuardFunc.getName()!;
-            }
+    // writes `inputChecker: [funcName]` for a given model
+    private writeCreateInputChecker(model: DataModel, writer: CodeBlockWriter, sourceFile: SourceFile) {
+        if (this.canCheckCreateBasedOnInput(model)) {
+            const inputCheckFunc = this.generateCreateInputCheckerFunction(model, sourceFile);
+            writer.write(`inputChecker: ${inputCheckFunc.getName()!},`);
         }
     }
 
-    private canCheckCreateBasedOnInput(model: DataModel, allows: Expression[], denies: Expression[]) {
+    private canCheckCreateBasedOnInput(model: DataModel) {
+        const allows = getPolicyExpressions(model, 'allow', 'create', false, 'all');
+        const denies = getPolicyExpressions(model, 'deny', 'create', false, 'all');
+
         return [...allows, ...denies].every((rule) => {
             return streamAst(rule).every((expr) => {
                 if (isThisExpr(expr)) {
@@ -555,249 +217,13 @@ export class PolicyGenerator {
         });
     }
 
-    // generates a "select" object that contains (recursively) fields referenced by the
-    // given policy rules
-    private generateSelectForRules(rules: Expression[], forAuthContext = false): object {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const result: any = {};
-        const addPath = (path: string[]) => {
-            let curr = result;
-            path.forEach((seg, i) => {
-                if (i === path.length - 1) {
-                    curr[seg] = true;
-                } else {
-                    if (!curr[seg]) {
-                        curr[seg] = { select: {} };
-                    }
-                    curr = curr[seg].select;
-                }
-            });
-        };
-
-        // visit a reference or member access expression to build a
-        // selection path
-        const visit = (node: Expression): string[] | undefined => {
-            if (isThisExpr(node)) {
-                return [];
-            }
-
-            if (isReferenceExpr(node)) {
-                const target = resolved(node.target);
-                if (isDataModelField(target)) {
-                    // a field selection, it's a terminal
-                    return [target.name];
-                }
-            }
-
-            if (isMemberAccessExpr(node)) {
-                if (forAuthContext && isAuthInvocation(node.operand)) {
-                    return [node.member.$refText];
-                }
-
-                if (isFutureExpr(node.operand)) {
-                    // future().field is not subject to pre-update select
-                    return undefined;
-                }
-
-                // build a selection path inside-out for chained member access
-                const inner = visit(node.operand);
-                if (inner) {
-                    return [...inner, node.member.$refText];
-                }
-            }
-
-            return undefined;
-        };
-
-        // collect selection paths from the given expression
-        const collectReferencePaths = (expr: Expression): string[][] => {
-            if (isThisExpr(expr) && !isMemberAccessExpr(expr.$container)) {
-                // a standalone `this` expression, include all id fields
-                const model = expr.$resolvedType?.decl as DataModel;
-                const idFields = getIdFields(model);
-                return idFields.map((field) => [field.name]);
-            }
-
-            if (isMemberAccessExpr(expr) || isReferenceExpr(expr)) {
-                const path = visit(expr);
-                if (path) {
-                    if (isDataModel(expr.$resolvedType?.decl)) {
-                        // member selection ended at a data model field, include its id fields
-                        const idFields = getIdFields(expr.$resolvedType?.decl as DataModel);
-                        return idFields.map((field) => [...path, field.name]);
-                    } else {
-                        return [path];
-                    }
-                } else {
-                    return [];
-                }
-            } else if (isCollectionPredicate(expr)) {
-                const path = visit(expr.left);
-                if (path) {
-                    // recurse into RHS
-                    const rhs = collectReferencePaths(expr.right);
-                    // combine path of LHS and RHS
-                    return rhs.map((r) => [...path, ...r]);
-                } else {
-                    return [];
-                }
-            } else if (isInvocationExpr(expr)) {
-                // recurse into function arguments
-                return expr.args.flatMap((arg) => collectReferencePaths(arg.value));
-            } else {
-                // recurse
-                const children = streamContents(expr)
-                    .filter((child): child is Expression => isExpression(child))
-                    .toArray();
-                return children.flatMap((child) => collectReferencePaths(child));
-            }
-        };
-
-        for (const rule of rules) {
-            const paths = collectReferencePaths(rule);
-            paths.forEach((p) => addPath(p));
-        }
-
-        return Object.keys(result).length === 0 ? undefined : result;
-    }
-
-    private generateQueryGuardFunction(
-        sourceFile: SourceFile,
-        model: DataModel,
-        kind: PolicyOperationKind,
-        allows: Expression[],
-        denies: Expression[],
-        forField?: DataModelField,
-        fieldOverride = false
-    ) {
+    // generates a function for checking "create" input
+    private generateCreateInputCheckerFunction(model: DataModel, sourceFile: SourceFile) {
         const statements: (string | WriterFunction)[] = [];
+        const allows = getPolicyExpressions(model, 'allow', 'create');
+        const denies = getPolicyExpressions(model, 'deny', 'create');
 
-        this.generateNormalizedAuthRef(model, allows, denies, statements);
-
-        const hasFieldAccess = [...denies, ...allows].some((rule) =>
-            streamAst(rule).some(
-                (child) =>
-                    // this.???
-                    isThisExpr(child) ||
-                    // future().???
-                    isFutureExpr(child) ||
-                    // field reference
-                    (isReferenceExpr(child) && isDataModelField(child.target.ref))
-            )
-        );
-
-        if (!hasFieldAccess) {
-            // none of the rules reference model fields, we can compile down to a plain boolean
-            // function in this case (so we can skip doing SQL queries when validating)
-            statements.push((writer) => {
-                const transformer = new TypeScriptExpressionTransformer({
-                    context: ExpressionContext.AccessPolicy,
-                    isPostGuard: kind === 'postUpdate',
-                });
-                try {
-                    denies.forEach((rule) => {
-                        writer.write(`if (${transformer.transform(rule, false)}) { return ${FALSE}; }`);
-                    });
-                    allows.forEach((rule) => {
-                        writer.write(`if (${transformer.transform(rule, false)}) { return ${TRUE}; }`);
-                    });
-                } catch (err) {
-                    if (err instanceof TypeScriptExpressionTransformerError) {
-                        throw new PluginError(name, err.message);
-                    } else {
-                        throw err;
-                    }
-                }
-
-                if (forField) {
-                    if (allows.length === 0) {
-                        // if there's no allow rule, for field-level rules, by default we allow
-                        writer.write(`return ${TRUE};`);
-                    } else {
-                        // if there's any allow rule, we deny unless any allow rule evaluates to true
-                        writer.write(`return ${FALSE};`);
-                    }
-                } else {
-                    // for model-level rules, the default is always deny
-                    writer.write(`return ${FALSE};`);
-                }
-            });
-        } else {
-            statements.push((writer) => {
-                writer.write('return ');
-                const exprWriter = new ExpressionWriter(writer, kind === 'postUpdate');
-                const writeDenies = () => {
-                    writer.conditionalWrite(denies.length > 1, '{ AND: [');
-                    denies.forEach((expr, i) => {
-                        writer.inlineBlock(() => {
-                            writer.write('NOT: ');
-                            exprWriter.write(expr);
-                        });
-                        writer.conditionalWrite(i !== denies.length - 1, ',');
-                    });
-                    writer.conditionalWrite(denies.length > 1, ']}');
-                };
-
-                const writeAllows = () => {
-                    writer.conditionalWrite(allows.length > 1, '{ OR: [');
-                    allows.forEach((expr, i) => {
-                        exprWriter.write(expr);
-                        writer.conditionalWrite(i !== allows.length - 1, ',');
-                    });
-                    writer.conditionalWrite(allows.length > 1, ']}');
-                };
-
-                if (allows.length > 0 && denies.length > 0) {
-                    // include both allow and deny rules
-                    writer.write('{ AND: [');
-                    writeDenies();
-                    writer.write(',');
-                    writeAllows();
-                    writer.write(']}');
-                } else if (denies.length > 0) {
-                    // only deny rules
-                    writeDenies();
-                } else if (allows.length > 0) {
-                    // only allow rules
-                    writeAllows();
-                } else {
-                    // disallow any operation
-                    writer.write(`{ OR: [] }`);
-                }
-                writer.write(';');
-            });
-        }
-
-        const func = sourceFile.addFunction({
-            name: `${model.name}${forField ? '$' + forField.name : ''}${fieldOverride ? '$override' : ''}_${kind}`,
-            returnType: 'any',
-            parameters: [
-                {
-                    name: 'context',
-                    type: 'QueryContext',
-                },
-                {
-                    // for generating field references used by field comparison in the same model
-                    name: 'db',
-                    type: 'CrudContract',
-                },
-            ],
-            statements,
-        });
-
-        return func;
-    }
-
-    private generateInputCheckFunction(
-        sourceFile: SourceFile,
-        model: DataModel,
-        kind: 'create' | 'update',
-        allows: Expression[],
-        denies: Expression[]
-    ): FunctionDeclaration {
-        const statements: (string | WriterFunction)[] = [];
-
-        this.generateNormalizedAuthRef(model, allows, denies, statements);
+        generateNormalizedAuthRef(model, allows, denies, statements);
 
         statements.push((writer) => {
             if (allows.length === 0) {
@@ -815,7 +241,7 @@ export class PolicyGenerator {
                     ? '!(' +
                       denies
                           .map((deny) => {
-                              return transformer.transform(deny);
+                              return transformer.transform(deny, false);
                           })
                           .join(' || ') +
                       ')'
@@ -823,7 +249,7 @@ export class PolicyGenerator {
 
             const allowStmt = allows
                 .map((allow) => {
-                    return transformer.transform(allow);
+                    return transformer.transform(allow, false);
                 })
                 .join(' || ');
 
@@ -832,7 +258,7 @@ export class PolicyGenerator {
         });
 
         const func = sourceFile.addFunction({
-            name: model.name + '_' + kind + '_input',
+            name: model.name + '_create_input',
             returnType: 'boolean',
             parameters: [
                 {
@@ -850,76 +276,208 @@ export class PolicyGenerator {
         return func;
     }
 
-    private generateNormalizedAuthRef(
+    // writes `update: ...` for a given model
+    private writeModelUpdateDef(
         model: DataModel,
-        allows: Expression[],
-        denies: Expression[],
-        statements: (string | WriterFunction)[]
+        policies: PolicyAnalysisResult,
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
     ) {
-        // check if any allow or deny rule contains 'auth()' invocation
-        const hasAuthRef = [...allows, ...denies].some((rule) =>
-            streamAst(rule).some((child) => isAuthInvocation(child))
+        writer.write(`update:`);
+        writer.inlineBlock(() => {
+            this.writeCommonModelDef(model, 'update', policies, writer, sourceFile);
+        });
+        writer.writeLine(',');
+    }
+
+    // writes `postUpdate: ...` for a given model
+    private writeModelPostUpdateDef(
+        model: DataModel,
+        policies: PolicyAnalysisResult,
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
+    ) {
+        writer.write(`postUpdate:`);
+        writer.inlineBlock(() => {
+            this.writeCommonModelDef(model, 'postUpdate', policies, writer, sourceFile);
+
+            // post-update policy has an additional selector for reading the pre-update entity data
+            this.writePostUpdatePreValueSelector(model, writer);
+        });
+        writer.writeLine(',');
+    }
+
+    private writePostUpdatePreValueSelector(model: DataModel, writer: CodeBlockWriter) {
+        const allows = getPolicyExpressions(model, 'allow', 'postUpdate');
+        const denies = getPolicyExpressions(model, 'deny', 'postUpdate');
+        const preValueSelect = generateSelectForRules([...allows, ...denies]);
+        if (preValueSelect) {
+            writer.writeLine(`preUpdateSelector: ${JSON.stringify(preValueSelect)},`);
+        }
+    }
+
+    // writes `delete: ...` for a given model
+    private writeModelDeleteDef(
+        model: DataModel,
+        policies: PolicyAnalysisResult,
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
+    ) {
+        writer.write(`delete:`);
+        writer.inlineBlock(() => {
+            this.writeCommonModelDef(model, 'delete', policies, writer, sourceFile);
+        });
+    }
+
+    // writes `[kind]: ...` for a given model
+    private writeCommonModelDef(
+        model: DataModel,
+        kind: PolicyOperationKind,
+        policies: PolicyAnalysisResult,
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
+    ) {
+        const allows = getPolicyExpressions(model, 'allow', kind);
+        const denies = getPolicyExpressions(model, 'deny', kind);
+
+        // policy guard
+        this.writePolicyGuard(model, kind, policies, allows, denies, writer, sourceFile);
+
+        // permission checker
+        if (kind !== 'postUpdate') {
+            this.writePermissionChecker(model, kind, policies, allows, denies, writer, sourceFile);
+        }
+
+        // write cross-model comparison rules as entity checker functions
+        // because they cannot be checked inside Prisma
+        this.writeEntityChecker(model, kind, writer, sourceFile, true);
+    }
+
+    private writeEntityChecker(
+        target: DataModel | DataModelField,
+        kind: PolicyOperationKind,
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile,
+        onlyCrossModelComparison = false,
+        forOverride = false
+    ) {
+        const allows = getPolicyExpressions(
+            target,
+            'allow',
+            kind,
+            forOverride,
+            onlyCrossModelComparison ? 'onlyCrossModelComparison' : 'all'
+        );
+        const denies = getPolicyExpressions(
+            target,
+            'deny',
+            kind,
+            forOverride,
+            onlyCrossModelComparison ? 'onlyCrossModelComparison' : 'all'
         );
 
-        if (hasAuthRef) {
-            const authModel = getAuthModel(getDataModels(model.$container, true));
-            if (!authModel) {
-                throw new PluginError(name, 'Auth model not found');
-            }
-            const userIdFields = getIdFields(authModel);
-            if (!userIdFields || userIdFields.length === 0) {
-                throw new PluginError(name, 'User model does not have an id field');
-            }
-
-            // normalize user to null to avoid accidentally use undefined in filter
-            statements.push(`const user: any = context.user ?? null;`);
-        }
-    }
-
-    private async generateCheckerForModel(model: DataModel, sourceFile: SourceFile) {
-        const result: Record<string, string | boolean> = {};
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const policies = analyzePolicies(model);
-
-        for (const kind of ['create', 'read', 'update', 'delete'] as const) {
-            if (policies[kind] === true || policies[kind] === false) {
-                result[kind] = policies[kind] as boolean;
-                continue;
-            }
-
-            const denies = this.getPolicyExpressions(model, 'deny', kind);
-            const allows = this.getPolicyExpressions(model, 'allow', kind);
-
-            if (kind === 'update' && allows.length === 0) {
-                // no allow rule for 'update', policy is constant based on if there's
-                // post-update counterpart
-                if (this.getPolicyExpressions(model, 'allow', 'postUpdate').length === 0) {
-                    result[kind] = false;
-                    continue;
-                } else {
-                    result[kind] = true;
-                    continue;
-                }
-            }
-
-            const guardFunc = this.generateCheckerFunction(sourceFile, model, kind, allows, denies);
-            result[kind] = guardFunc.getName()!;
+        if (allows.length === 0 && denies.length === 0) {
+            return;
         }
 
-        return result;
+        const model = isDataModel(target) ? target : (target.$container as DataModel);
+        const func = generateEntityCheckerFunction(
+            sourceFile,
+            model,
+            kind,
+            allows,
+            denies,
+            isDataModelField(target) ? target : undefined,
+            forOverride
+        );
+        const selector = generateSelectForRules([...allows, ...denies], false, kind !== 'postUpdate') ?? {};
+        const key = forOverride ? 'overrideEntityChecker' : 'entityChecker';
+        writer.write(`${key}: { func: ${func.getName()!}, selector: ${JSON.stringify(selector)} },`);
     }
 
-    private generateCheckerFunction(
-        sourceFile: SourceFile,
+    // writes `guard: ...` for a given policy operation kind
+    private writePolicyGuard(
+        model: DataModel,
+        kind: PolicyOperationKind,
+        policies: ReturnType<typeof analyzePolicies>,
+        allows: Expression[],
+        denies: Expression[],
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
+    ) {
+        if (kind === 'update' && allows.length === 0) {
+            // no allow rule for 'update', policy is constant based on if there's
+            // post-update counterpart
+            if (getPolicyExpressions(model, 'allow', 'postUpdate').length === 0) {
+                writer.write(`guard: false,`);
+            } else {
+                writer.write(`guard: true,`);
+            }
+            return;
+        }
+
+        if (kind === 'postUpdate' && allows.length === 0 && denies.length === 0) {
+            // no 'postUpdate' rule, always allow
+            writer.write(`guard: true,`);
+            return;
+        }
+
+        if (kind in policies && typeof policies[kind as keyof typeof policies] === 'boolean') {
+            // constant policy
+            writer.write(`guard: ${policies[kind as keyof typeof policies]},`);
+            return;
+        }
+
+        // generate a policy function that evaluates a partial prisma query
+        const guardFunc = generateQueryGuardFunction(sourceFile, model, kind, allows, denies);
+        writer.write(`guard: ${guardFunc.getName()!},`);
+    }
+
+    // writes `permissionChecker: ...` for a given policy operation kind
+    private writePermissionChecker(
+        model: DataModel,
+        kind: PolicyCrudKind,
+        policies: PolicyAnalysisResult,
+        allows: Expression[],
+        denies: Expression[],
+        writer: CodeBlockWriter,
+        sourceFile: SourceFile
+    ) {
+        if (this.options.generatePermissionChecker !== true) {
+            return;
+        }
+
+        if (policies[kind] === true || policies[kind] === false) {
+            // constant policy
+            writer.write(`permissionChecker: ${policies[kind]},`);
+            return;
+        }
+
+        if (kind === 'update' && allows.length === 0) {
+            // no allow rule for 'update', policy is constant based on if there's
+            // post-update counterpart
+            if (getPolicyExpressions(model, 'allow', 'postUpdate').length === 0) {
+                writer.write(`permissionChecker: false,`);
+            } else {
+                writer.write(`permissionChecker: true,`);
+            }
+            return;
+        }
+
+        const guardFunc = this.generatePermissionCheckerFunction(model, kind, allows, denies, sourceFile);
+        writer.write(`permissionChecker: ${guardFunc.getName()!},`);
+    }
+
+    private generatePermissionCheckerFunction(
         model: DataModel,
         kind: string,
         allows: Expression[],
-        denies: Expression[]
+        denies: Expression[],
+        sourceFile: SourceFile
     ) {
         const statements: string[] = [];
 
-        this.generateNormalizedAuthRef(model, allows, denies, statements);
+        generateNormalizedAuthRef(model, allows, denies, statements);
 
         const transformed = new ConstraintTransformer({
             authAccessor: 'user',
@@ -929,11 +487,11 @@ export class PolicyGenerator {
 
         const func = sourceFile.addFunction({
             name: `${model.name}$checker$${kind}`,
-            returnType: 'CheckerConstraint',
+            returnType: 'PermissionCheckerConstraint',
             parameters: [
                 {
                     name: 'context',
-                    type: 'CheckerContext',
+                    type: 'PermissionCheckerContext',
                 },
             ],
             statements,
@@ -941,4 +499,179 @@ export class PolicyGenerator {
 
         return func;
     }
+
+    // #endregion
+
+    // #region Field-level definitions
+
+    private writeFieldLevelDefs(model: DataModel, writer: CodeBlockWriter, sf: SourceFile) {
+        writer.write('fieldLevel:');
+        writer.inlineBlock(() => {
+            this.writeFieldReadDef(model, writer, sf);
+            this.writeFieldUpdateDef(model, writer, sf);
+        });
+        writer.writeLine(',');
+    }
+
+    private writeFieldReadDef(model: DataModel, writer: CodeBlockWriter, sourceFile: SourceFile) {
+        writer.writeLine('read:');
+        writer.block(() => {
+            for (const field of model.fields) {
+                const allows = getPolicyExpressions(field, 'allow', 'read');
+                const denies = getPolicyExpressions(field, 'deny', 'read');
+                const overrideAllows = getPolicyExpressions(field, 'allow', 'read', true);
+
+                if (allows.length === 0 && denies.length === 0 && overrideAllows.length === 0) {
+                    continue;
+                }
+
+                writer.write(`${field.name}:`);
+
+                writer.block(() => {
+                    // guard
+                    const guardFunc = generateQueryGuardFunction(sourceFile, model, 'read', allows, denies, field);
+                    writer.write(`guard: ${guardFunc.getName()},`);
+
+                    // checker function
+                    // write all field-level rules as entity checker function
+                    this.writeEntityChecker(field, 'read', writer, sourceFile, false, false);
+
+                    if (overrideAllows.length > 0) {
+                        // override guard function
+                        const denies = getPolicyExpressions(field, 'deny', 'read');
+                        const overrideGuardFunc = generateQueryGuardFunction(
+                            sourceFile,
+                            model,
+                            'read',
+                            overrideAllows,
+                            denies,
+                            field,
+                            true
+                        );
+                        writer.write(`overrideGuard: ${overrideGuardFunc.getName()},`);
+
+                        // additional entity checker for override
+                        this.writeEntityChecker(field, 'read', writer, sourceFile, false, true);
+                    }
+                });
+                writer.writeLine(',');
+            }
+        });
+        writer.writeLine(',');
+    }
+
+    private writeFieldUpdateDef(model: DataModel, writer: CodeBlockWriter, sourceFile: SourceFile) {
+        writer.writeLine('update:');
+        writer.block(() => {
+            for (const field of model.fields) {
+                const allows = getPolicyExpressions(field, 'allow', 'update');
+                const denies = getPolicyExpressions(field, 'deny', 'update');
+                const overrideAllows = getPolicyExpressions(field, 'allow', 'update', true);
+
+                if (allows.length === 0 && denies.length === 0 && overrideAllows.length === 0) {
+                    continue;
+                }
+
+                writer.write(`${field.name}:`);
+
+                writer.block(() => {
+                    // guard
+                    const guardFunc = generateQueryGuardFunction(sourceFile, model, 'update', allows, denies, field);
+                    writer.write(`guard: ${guardFunc.getName()},`);
+
+                    // write cross-model comparison rules as entity checker functions
+                    // because they cannot be checked inside Prisma
+                    this.writeEntityChecker(field, 'update', writer, sourceFile, true, false);
+
+                    if (overrideAllows.length > 0) {
+                        // override guard
+                        const overrideGuardFunc = generateQueryGuardFunction(
+                            sourceFile,
+                            model,
+                            'update',
+                            overrideAllows,
+                            denies,
+                            field,
+                            true
+                        );
+                        writer.write(`overrideGuard: ${overrideGuardFunc.getName()},`);
+
+                        // write cross-model comparison override rules as entity checker functions
+                        // because they cannot be checked inside Prisma
+                        this.writeEntityChecker(field, 'update', writer, sourceFile, true, true);
+                    }
+                });
+                writer.writeLine(',');
+            }
+        });
+        writer.writeLine(',');
+    }
+
+    // #endregion
+
+    //#region Auth selector
+
+    private writeAuthSelector(models: DataModel[], writer: CodeBlockWriter) {
+        const authSelector = this.generateAuthSelector(models);
+        if (authSelector) {
+            writer.write(`authSelector: ${JSON.stringify(authSelector)},`);
+        }
+    }
+
+    // Generates a { select: ... } object to select `auth()` fields used in policy rules
+    private generateAuthSelector(models: DataModel[]) {
+        const authRules: Expression[] = [];
+
+        models.forEach((model) => {
+            // model-level rules
+            const modelPolicyAttrs = model.attributes.filter((attr) =>
+                ['@@allow', '@@deny'].includes(attr.decl.$refText)
+            );
+
+            // field-level rules
+            const fieldPolicyAttrs = model.fields
+                .flatMap((f) => f.attributes)
+                .filter((attr) => ['@allow', '@deny'].includes(attr.decl.$refText));
+
+            // all rule expression
+            const allExpressions = [...modelPolicyAttrs, ...fieldPolicyAttrs]
+                .filter((attr) => attr.args.length > 1)
+                .map((attr) => attr.args[1].value);
+
+            // collect `auth()` member access
+            allExpressions.forEach((rule) => {
+                streamAst(rule).forEach((node) => {
+                    if (isMemberAccessExpr(node) && isAuthInvocation(node.operand)) {
+                        authRules.push(node);
+                    }
+                });
+            });
+        });
+
+        if (authRules.length > 0) {
+            return generateSelectForRules(authRules, true);
+        } else {
+            return undefined;
+        }
+    }
+
+    // #endregion
+
+    // #region Validation meta
+
+    private writeValidationMeta(writer: CodeBlockWriter, models: DataModel[]) {
+        writer.write('validation:');
+        writer.inlineBlock(() => {
+            for (const model of models) {
+                writer.write(`${lowerCaseFirst(model.name)}:`);
+                writer.inlineBlock(() => {
+                    writer.write(`hasValidation: ${hasValidationAttributes(model)}`);
+                });
+                writer.writeLine(',');
+            }
+        });
+        writer.writeLine(',');
+    }
+
+    // #endregion
 }

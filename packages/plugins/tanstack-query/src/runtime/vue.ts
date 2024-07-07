@@ -5,6 +5,7 @@ import {
     useMutation,
     useQuery,
     useQueryClient,
+    type InfiniteData,
     type QueryKey,
     type UseInfiniteQueryOptions,
     type UseMutationOptions,
@@ -103,8 +104,12 @@ export function useInfiniteModelQuery<TQueryFnData, TData, TError>(
     url: string,
     args?: MaybeRefOrGetter<unknown> | ComputedRef<unknown>,
     options?:
-        | MaybeRefOrGetter<Omit<UseInfiniteQueryOptions<TQueryFnData, TError, TData>, 'queryKey'>>
-        | ComputedRef<Omit<UseInfiniteQueryOptions<TQueryFnData, TError, TData>, 'queryKey'>>,
+        | MaybeRefOrGetter<
+              Omit<UseInfiniteQueryOptions<TQueryFnData, TError, InfiniteData<TData>>, 'queryKey' | 'initialPageParam'>
+          >
+        | ComputedRef<
+              Omit<UseInfiniteQueryOptions<TQueryFnData, TError, InfiniteData<TData>>, 'queryKey' | 'initialPageParam'>
+          >,
     fetch?: FetchFn
 ) {
     // CHECKME: vue-query's `useInfiniteQuery`'s input typing seems wrong
@@ -115,6 +120,7 @@ export function useInfiniteModelQuery<TQueryFnData, TData, TError>(
             const reqUrl = makeUrl(url, pageParam ?? toValue(args));
             return fetcher<TQueryFnData, false>(reqUrl, undefined, fetch, false);
         },
+        initialPageParam: toValue(args),
         ...toValue(options),
     }));
 
