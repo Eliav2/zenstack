@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import deepcopy from 'deepcopy';
 import { PRISMA_PROXY_ENHANCER } from '../constants';
 import type { ModelMeta } from '../cross';
+import { clone } from '../cross';
 import type { DbClientContract } from '../types';
 import type { InternalEnhancementOptions } from './create-enhancement';
 import { createDeferredPromise, createFluentPromise } from './promise';
@@ -35,7 +35,7 @@ export interface PrismaProxyHandler {
 
     createMany(args: { data: any; skipDuplicates?: boolean }): Promise<BatchResult>;
 
-    createManyAndReturn(args: { data: any; select: any; include: any; skipDuplicates?: boolean }): Promise<unknown[]>;
+    createManyAndReturn(args: { data: any; select?: any; skipDuplicates?: boolean }): Promise<unknown[]>;
 
     update(args: any): Promise<unknown>;
 
@@ -74,7 +74,7 @@ export class DefaultPrismaProxyHandler implements PrismaProxyHandler {
     ) {}
 
     protected withFluentCall(method: keyof PrismaProxyHandler, args: any, postProcess = true): Promise<unknown> {
-        args = args ? deepcopy(args) : {};
+        args = args ? clone(args) : {};
         const promise = createFluentPromise(
             async () => {
                 args = await this.preprocessArgs(method, args);
@@ -124,7 +124,7 @@ export class DefaultPrismaProxyHandler implements PrismaProxyHandler {
         return this.deferred<{ count: number }>('createMany', args, false);
     }
 
-    createManyAndReturn(args: { data: any; select: any; include: any; skipDuplicates?: boolean }) {
+    createManyAndReturn(args: { data: any; select?: any; skipDuplicates?: boolean }) {
         return this.deferred<unknown[]>('createManyAndReturn', args);
     }
 
