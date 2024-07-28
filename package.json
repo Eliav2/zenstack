@@ -39,6 +39,11 @@
         "ts-node": "^10.9.1",
         "tsup": "^8.0.1",
         "tsx": "^4.7.1",
-        "typescript": "^5.4.4"
+        "typescript": "^5.4.4",
+
+        "@zenstackhq/runtime": "workspace:*",
+        "@zenstackhq/server": "workspace:*",
+        "@zenstackhq/tanstack-query": "workspace:*",
+        "zenstack": "workspace:*"
     }
 }
