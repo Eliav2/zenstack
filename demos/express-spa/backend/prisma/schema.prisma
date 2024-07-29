@@ -16,17 +16,13 @@ generator client {
 /// @@allow('all', auth() == this)
 model User {
   id       String @id() @default(cuid())
-  /// @email
-  /// @length(6, 32)
-  email    String @unique()
-  /// @password
-  /// @omit
-  password String
+  username String @unique()
   posts    Post[]
 }
 
 /// @@allow('read', auth() != null && published)
 /// @@allow('all', author == auth())
+/// @@allow('create', auth() != null)
 model Post {
   id        String   @id() @default(cuid())
   createdAt DateTime @default(now())

@@ -24,8 +24,7 @@ plugin hooks {
  */
 model User {
     id       String @id @default(cuid())
-    email    String @unique @email @length(6, 32)
-    password String @password @omit
+    username    String @unique
     posts    Post[]
 
     // everybody can signup
@@ -53,4 +52,7 @@ model Post {
 
     // full access by author
     @@allow('all', author == auth())
+
+    // signed in users can post
+    @@allow('create', auth() != null)
 }

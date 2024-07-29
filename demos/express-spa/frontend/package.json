@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@express-spa-demo/backend": "workspace:*",
+    "@tanstack/react-form": "^0.26.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -1,22 +1,27 @@
 import express, { Request, Response } from 'express';
 import { ZenStackMiddleware } from '@zenstackhq/server/express';
 import { enhance } from '@zenstackhq/runtime';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+import bodyParser from 'body-parser';
 
 export const app = express();
+app.use(bodyParser.json({ limit: '50mb' }));
 
 export const prisma = new PrismaClient();
 
 function getUserFromRequest(req: Request) {
-    return req.headers['x-user-email'] as string;
+    return req.headers['x-user-username'] as string;
 }
 
 export async function getPrisma(req: Request) {
-    const email = getUserFromRequest(req);
+    const username = getUserFromRequest(req);
+
     const user =
-        email &&
-        (await prisma.user.findUnique({
-            where: { email },
+        username &&
+        (await prisma.user.upsert({
+            where: { username },
+            update: {},
+            create: { username },
         }));
 
     const context = user ? { ...user } : undefined;

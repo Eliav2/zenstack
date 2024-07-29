@@ -7,7 +7,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "generate": "zenstack generate",
-    "dev": "tsx watch src/server.ts"
+    "db": "prisma db push",
+    "dev": "tsx watch src/server.ts",
+    "studio": "prisma studio"
   },
   "keywords": [],
   "author": "",
@@ -21,6 +23,7 @@
     "prisma": "5.16.x"
   },
   "devDependencies": {
+    "body-parser": "^1.20.2",
     "package-up": "^5.0.0",
     "pkg-up": "^5.0.0",
     "zenstack": "workspace:*"

@@ -8,11 +8,8 @@ const metadata = {
                     type: "String",
                     isId: true,
                     attributes: [{ "name": "@default", "args": [] }],
-                }, email: {
-                    name: "email",
-                    type: "String",
-                }, password: {
-                    name: "password",
+                }, username: {
+                    name: "username",
                     type: "String",
                 }, posts: {
                     name: "posts",
@@ -26,9 +23,9 @@ const metadata = {
                 id: {
                     name: "id",
                     fields: ["id"]
-                }, email: {
-                    name: "email",
-                    fields: ["email"]
+                }, username: {
+                    name: "username",
+                    fields: ["username"]
                 },
             }
             ,
