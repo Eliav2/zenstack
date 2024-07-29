@@ -15,6 +15,8 @@ const run: PluginFunction = async (model, options, _dmmf, globalOptions) => {
     }
     outDir = resolvePath(outDir, options);
 
+    console.log('\x1b[90m%s\x1b[0m', ` output directory: ${outDir}`);
+
     const project = globalOptions?.tsProject ?? createProject();
 
     await generateModelMeta(model, options, project, outDir);

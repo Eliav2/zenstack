@@ -12,6 +12,13 @@ generator client {
     provider = "prisma-client-js"
 }
 
+plugin hooks {
+    provider = '@zenstackhq/tanstack-query'
+    target = 'react'
+    version = 'v5'
+    output = 'src/generated-hooks'
+}
+
 /**
  * User model
  */

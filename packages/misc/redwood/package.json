@@ -39,13 +39,13 @@
     "homepage": "https://zenstack.dev",
     "license": "MIT",
     "dependencies": {
+        "@redwoodjs/cli-helpers": "^6.6.0",
         "@zenstackhq/runtime": "workspace:*",
         "colors": "1.4.0",
-        "ts-morph": "^16.0.0",
-        "@redwoodjs/cli-helpers": "^6.6.0",
         "execa": "^5.0.0",
         "listr2": "^6.0.0",
         "terminal-link": "^2.0.0",
+        "ts-morph": "^16.0.0",
         "yargs": "^17.7.2"
     },
     "devDependencies": {

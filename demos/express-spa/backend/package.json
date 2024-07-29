@@ -1,23 +1,28 @@
 {
-  "name": "backend",
+  "name": "@express-spa-demo/backend",
+  "private": true,
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "generate": "zenstack generate"
+    "generate": "zenstack generate",
+    "dev": "tsx watch src/server.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@prisma/client": "5.15.x",
+    "@prisma/client": "5.16.x",
     "@types/express": "^4.17.17",
-    "@zenstackhq/runtime": "2.3.2",
+    "@zenstackhq/runtime": "workspace:*",
+    "@zenstackhq/tanstack-query": "workspace:*",
     "express": "^4.19.2",
-    "prisma": "5.15.x"
+    "prisma": "5.16.x"
   },
   "devDependencies": {
-    "zenstack": "2.3.2"
+    "package-up": "^5.0.0",
+    "pkg-up": "^5.0.0",
+    "zenstack": "workspace:*"
   }
 }

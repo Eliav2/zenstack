@@ -30,3 +30,7 @@ app.use(
         // zodSchemas: true,
     })
 );
+
+app.get('/', async (req: Request, res: Response) => {
+    return res.json({ message: 'Backend up' });
+});
