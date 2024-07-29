@@ -1,8 +1,19 @@
 import './App.css';
-import { useCreatePost, useFindManyPost } from '@express-spa-demo/backend/src/generated-hooks';
+import {
+    useCheckPost,
+    useCreatePost,
+    useCreateUser,
+    useDeletePost,
+    useFindFirstUser,
+    useFindManyPost,
+    useUpdatePost,
+} from '@express-spa-demo/backend/src/generated-hooks';
 import { FieldApi, useForm } from '@tanstack/react-form';
-import React from 'react';
 import { useAppState } from './AppStateProvider.tsx';
+import type { Post, User } from 'prisma-models';
+import { useQueryClient } from '@tanstack/react-query';
+
+type PostWithAuthor = Post & { author: User };
 
 function App() {
     return (
@@ -17,6 +28,8 @@ function App() {
 
 const CurrentUser = () => {
     const { currentUser, setCurrentUser } = useAppState();
+    const queryClient = useQueryClient();
+    const createUserQuery = useCreateUser();
     return (
         <>
             <label htmlFor={'currentUser'}>Current Authenticated User:</label>
@@ -28,6 +41,14 @@ const CurrentUser = () => {
                     setCurrentUser(e.target.value);
                 }}
             />
+            <button
+                onClick={() => {
+                    queryClient.invalidateQueries();
+                    // createUserQuery.mutateAsync({ data: { username: currentUser } });
+                }}
+            >
+                Update
+            </button>
         </>
     );
 };
@@ -42,32 +63,62 @@ const Posts = () => {
 
     return (
         <div style={{ border: '1px solid grey', padding: 8, borderRadius: 8, marginBlock: 16 }}>
+            <div
+                style={{
+                    color: 'grey',
+                    fontSize: 12,
+                    marginBottom: 8,
+                }}
+            >
+                you can see only posts related to the current authenticated user
+            </div>
             <h4>posts</h4>
             {postsQuery.isLoading ? (
                 <div>Loading...</div>
             ) : (
                 (posts.length === 0 && <span>No posts yet</span>) ||
-                posts?.map((post) => (
-                    <div
-                        key={post.id}
-                        style={{ border: '1px solid grey', padding: 2, borderRadius: 8, marginBlock: 8 }}
-                    >
-                        <strong>{post.title}</strong>
-                        <div>{post.content}</div>
-                        <div>by: {post.author?.username}</div>
-                    </div>
-                ))
+                posts?.map((post) => <PostSection key={post.id} post={post} />)
             )}
         </div>
     );
 };
 
-const Post = ({ post }: { post: any }) => {
+const PostSection = ({ post }: { post: PostWithAuthor }) => {
+    const { currentUser } = useAppState();
+    const currentUserFromDbQuery = useFindFirstUser({ where: { username: currentUser } });
+    const authorId = currentUserFromDbQuery.data?.id;
+    console.log('authorId', currentUserFromDbQuery.data);
+    const deletePostQuery = useDeletePost();
+    const publishPostQuery = useUpdatePost();
+    const userCanUpdateQuery = useCheckPost({ operation: 'update', where: { id: post.id, authorId: authorId } });
+    const userCanDeleteQuery = useCheckPost({ operation: 'delete', where: { id: post.id, authorId: authorId } });
+    console.log('userCanDeleteQuery', userCanDeleteQuery.data);
+    const userCanUpdate = userCanUpdateQuery.data ?? false;
+    const userCanDelete = userCanDeleteQuery.data ?? false;
+    console.log(',userCanUpdate', userCanUpdateQuery.data);
     return (
-        <div style={{ border: '1px solid grey', padding: 8, borderRadius: 8, marginBlock: 8 }}>
-            <strong>{post.title}</strong>
+        <div key={post.id} style={{ border: '1px solid grey', padding: 2, borderRadius: 8, marginBlock: 8 }}>
+            <div>
+                <strong>{post.title}</strong> ({post.published ? 'published' : 'draft'})
+            </div>
             <div>{post.content}</div>
             <div>by: {post.author?.username}</div>
+            <button
+                onClick={() => {
+                    deletePostQuery.mutateAsync({ where: { id: post.id } });
+                }}
+                disabled={!userCanDelete}
+            >
+                Delete
+            </button>
+            <button
+                onClick={() => {
+                    publishPostQuery.mutateAsync({ where: { id: post.id }, data: { published: !post.published } });
+                }}
+                disabled={!userCanUpdate}
+            >
+                {post.published ? 'Unpublish' : 'Publish'}
+            </button>
         </div>
     );
 };
@@ -96,6 +147,7 @@ const CreatePost = () => {
                     },
                 },
             });
+            form.reset();
         },
     });
 

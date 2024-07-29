@@ -12,10 +12,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
+/// @@allow('read', auth() != null)
 /// @@allow('create', true)
 /// @@allow('all', auth() == this)
 model User {
   id       String @id() @default(cuid())
+  /// @allow('read', auth() != null)
   username String @unique()
   posts    Post[]
 }
