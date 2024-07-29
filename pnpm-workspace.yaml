@@ -4,3 +4,7 @@ packages:
     - 'packages/misc/*'
     - 'packages/ide/*'
     - 'tests/*'
+
+    # demos
+    - 'demos/express-spa/*'
+

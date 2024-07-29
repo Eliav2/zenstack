@@ -1,0 +1,67 @@
+// This is a sample model to get you started.
+
+/**
+ * A sample data source using local sqlite db.
+ */
+datasource db {
+    provider = 'sqlite'
+    url = 'file:./dev.db'
+}
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+plugin hooks {
+    provider = '@zenstackhq/tanstack-query'
+    target = 'react'
+    version = 'v5'
+    output = 'src/generated-hooks'
+}
+
+plugin enhancer {
+    provider = '@core/enhancer'
+    generatePermissionChecker = true
+}
+
+/**
+ * User model
+ */
+model User {
+    id       String @id @default(cuid())
+    username    String @unique @allow('read', auth() != null)
+    posts    Post[]
+
+    // signed in users can read users
+    @@allow('read', auth() != null)
+
+
+    // everybody can signup
+    @@allow('create', true)
+
+    // full access by self
+    @@allow('all', auth() == this)
+}
+
+/**
+ * Post model
+ */
+model Post {
+    id        String   @id @default(cuid())
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    title     String   @length(1, 256)
+    content   String
+    published Boolean  @default(false)
+    author    User     @relation(fields: [authorId], references: [id])
+    authorId  String
+
+    // allow read for all signin users
+    @@allow('read', auth() != null && published)
+
+    // full access by author
+    @@allow('all', author == auth())
+
+    // signed in users can post
+    @@allow('create', auth() != null)
+}

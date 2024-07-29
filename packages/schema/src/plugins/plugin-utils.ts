@@ -96,12 +96,12 @@ export function getDefaultOutputFolder(globalOptions?: PluginGlobalOptions) {
     // find the real runtime module path, it might be a symlink in pnpm
     let runtimeModulePath = require.resolve('@zenstackhq/runtime');
 
-    // start with the parent folder of @zenstackhq, supposed to be a node_modules folder
-    while (!runtimeModulePath.endsWith('@zenstackhq') && runtimeModulePath !== '/') {
+    // start with the parent folder of @zenstackhq, supposed to be a node_modules folder in production, or 'runtime' package in dev
+    while (!runtimeModulePath.endsWith('runtime') && runtimeModulePath !== '/') {
         runtimeModulePath = path.join(runtimeModulePath, '..');
     }
-    runtimeModulePath = path.join(runtimeModulePath, '..');
-
+    if (runtimeModulePath === '/') return undefined;
+    // runtimeModulePath = path.join(runtimeModulePath, '..');
     const modulesFolder = getNodeModulesFolder(runtimeModulePath);
     return modulesFolder ? path.join(modulesFolder, DEFAULT_RUNTIME_LOAD_PATH) : undefined;
 }
