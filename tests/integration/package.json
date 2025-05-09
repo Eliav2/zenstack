@@ -23,7 +23,7 @@
         "@zenstackhq/trpc": "workspace:*",
         "fs-extra": "^11.1.0",
         "jest-fetch-mock": "^3.0.3",
-        "next": "^12.3.1",
+        "next": "14.2.4",
         "tmp": "^0.2.1",
         "uuid": "^9.0.0",
         "zenstack": "workspace: *"
@@ -36,6 +36,6 @@
         "decimal.js": "^10.4.2",
         "pg": "^8.11.1",
         "sleep-promise": "^9.1.0",
-        "superjson": "^1.11.0"
+        "superjson": "^1.13.0"
     }
 }
